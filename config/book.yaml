@@ -26,7 +26,9 @@ embedding:
   local_model_path: models/bge-m3
   max_length: 2048
   batch_size_cpu: 2
-  collection_name: byzantine_library_v1
+  # Existing legacy CLI index. The Streamlit multi-document app uses its own
+  # byzantine_library_v1 collection under APP_DATA/qdrant.
+  collection_name: byzantine_bge_m3_v1
 
 generation:
   provider: deepseek

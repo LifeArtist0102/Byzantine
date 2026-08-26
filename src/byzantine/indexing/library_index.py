@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 
 from byzantine.indexing.vector_index import qdrant_id
@@ -13,7 +14,13 @@ DEFAULT_COLLECTION = "byzantine_library_v1"
 
 
 def _model_name() -> str:
-    return os.getenv("BYZANTINE_EMBEDDING_MODEL", "BAAI/bge-m3")
+    configured = os.getenv("BYZANTINE_EMBEDDING_MODEL")
+    if configured:
+        return configured
+    bundled = Path(__file__).resolve().parents[3] / "models" / "bge-m3"
+    # Reuse the project-local model before attempting a download into the
+    # user's C-drive Hugging Face cache.
+    return str(bundled) if bundled.is_dir() else "BAAI/bge-m3"
 
 
 def _dependencies() -> tuple[Any, Any, Any, Any]:

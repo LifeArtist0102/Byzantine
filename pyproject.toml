@@ -24,6 +24,8 @@ rag = [
     "llama-index-vector-stores-qdrant>=0.6",
     "qdrant-client>=1.13",
     "FlagEmbedding>=1.3",
+    "sentence-transformers>=3,<6",
+    "transformers>=4.44,<5",
 ]
 app = [
     "streamlit>=1.42",
@@ -36,6 +38,8 @@ ocr = ["paddleocr>=2.9", "paddlepaddle>=3.0"]
 local = [
     "qdrant-client>=1.13",
     "FlagEmbedding>=1.3",
+    "sentence-transformers>=3,<6",
+    "transformers>=4.44,<5",
     "streamlit>=1.42",
     "openai>=1.0",
     "python-dotenv>=1.0",
