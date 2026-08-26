@@ -1,0 +1,69 @@
+# Conservative, reviewed aliases. Add an alias only when it has an unambiguous
+# canonical form; the enrichment command writes unresolved name-like strings to
+# person_candidates rather than treating them as historical facts.
+people:
+  - canonical: Basil II
+    aliases: ["Basil II", "Basil II Bulgaroktonos"]
+  - canonical: Alexios I Komnenos
+    aliases: ["Alexios I", "Alexios I Komnenos"]
+  - canonical: Justinian I
+    aliases: ["Justinian", "Justinian I"]
+  - canonical: Herakleios
+    aliases: ["Herakleios", "Heraclius"]
+  - canonical: Constantine VII Porphyrogenitus
+    aliases: ["Constantine VII", "Constantine VII Porphyrogenitus"]
+  - canonical: Michael VIII Palaiologos
+    aliases: ["Michael VIII", "Michael VIII Palaiologos"]
+  - canonical: Anna Komnene
+    aliases: ["Anna Komnene"]
+  - canonical: Nikephoros II Phokas
+    aliases: ["Nikephoros II", "Nikephoros II Phokas"]
+  - canonical: Romanos I Lekapenos
+    aliases: ["Romanos I", "Romanos I Lekapenos"]
+  - canonical: John I Tzimiskes
+    aliases: ["John I Tzimiskes"]
+  - canonical: Manuel I Komnenos
+    aliases: ["Manuel I", "Manuel I Komnenos"]
+  - canonical: Andronikos II Palaiologos
+    aliases: ["Andronikos II", "Andronikos II Palaiologos"]
+  - canonical: Mehmed II
+    aliases: ["Mehmed II", "Mohammed II"]
+places:
+  - canonical: Constantinople
+    aliases: ["Constantinople", "Byzantium"]
+  - canonical: Anatolia
+    aliases: ["Anatolia", "Asia Minor"]
+  - canonical: Balkans
+    aliases: ["Balkans", "Balkan peninsula"]
+  - canonical: Nicaea
+    aliases: ["Nicaea"]
+  - canonical: Trebizond
+    aliases: ["Trebizond"]
+  - canonical: Thessalonike
+    aliases: ["Thessalonike", "Thessaloniki"]
+  - canonical: Antioch
+    aliases: ["Antioch"]
+  - canonical: Jerusalem
+    aliases: ["Jerusalem"]
+  - canonical: Alexandria
+    aliases: ["Alexandria"]
+  - canonical: Rome
+    aliases: ["Rome", "Roman Empire"]
+  - canonical: Bulgaria
+    aliases: ["Bulgaria", "Bulgarian"]
+  - canonical: Serbia
+    aliases: ["Serbia", "Serbian"]
+  - canonical: Venice
+    aliases: ["Venice", "Venetian"]
+  - canonical: Egypt
+    aliases: ["Egypt", "Egyptian"]
+  - canonical: Syria
+    aliases: ["Syria", "Syrian"]
+topics:
+  warfare: [war, warfare, military, army, battle, campaign, siege, naval]
+  diplomacy: [diplomacy, diplomatic, treaty, ambassador, alliance, embassy]
+  finance: [revenue, expenditure, tax, taxation, fiscal, coinage, currency]
+  religion: [church, patriarch, bishop, theology, monastic, monastery, liturgy, iconoclasm]
+  government: [emperor, imperial, court, bureaucracy, administration, law]
+  society: [family, women, health, food, population, education, slavery]
+  economy: [trade, commerce, agriculture, production, merchant, market]

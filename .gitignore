@@ -1,0 +1,16 @@
+.idea/
+.venv/
+__pycache__/
+*.py[cod]
+.env
+.pytest_cache/
+*.egg-info/
+tmp-*.log
+models/
+
+# The source book may be copyrighted and is deliberately never committed.
+data/source/*
+!data/source/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+data/qdrant/
