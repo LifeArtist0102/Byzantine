@@ -14,3 +14,8 @@ data/source/*
 data/processed/*
 !data/processed/.gitkeep
 data/qdrant/
+.streamlit/
+*.sqlite
+*.sqlite3
+library.db
+doc-review-tmp/

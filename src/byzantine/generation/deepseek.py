@@ -20,6 +20,11 @@ class Source:
     section: str
     pages: str
     text: str
+    title: str = ""
+    author: str | None = None
+    edition: str | None = None
+    collection_type: str | None = None
+    source_regions: list[dict[str, Any]] | None = None
 
 
 SYSTEM_PROMPT = """You are a rigorous historian of Byzantine history.
@@ -54,7 +59,7 @@ def make_sources(retrieval_result: dict[str, Any], *, max_characters: int) -> li
         text = " ".join(hit["text"].split())
         if len(text) > max_characters:
             text = f"{text[:max_characters].rstrip()}…"
-        sources.append(Source(label=f"S{index}", section=section, pages=pages, text=text))
+        sources.append(Source(label=f"S{index}", section=section, pages=pages, text=text, title=str(hit.get("title", "")), author=hit.get("author"), edition=hit.get("edition"), collection_type=hit.get("collection_type"), source_regions=hit.get("source_regions")))
     return sources
 
 
@@ -64,7 +69,7 @@ def build_user_prompt(question: str, sources: list[Source]) -> str:
         return f"Question: {question}\n\nNo sources were retrieved."
     evidence = "\n\n".join(
         f"<SOURCE label=\"[{source.label}]\">\n"
-        f"Section: {source.section}\n{source.pages}\n"
+        f"Bibliography: {source.title}; {source.author or ''}; {source.edition or ''}; {source.collection_type or ''}\nSection: {source.section}\n{source.pages}\n"
         f"Text: {source.text}\n</SOURCE>"
         for source in sources
     )
@@ -149,5 +154,5 @@ def render_answer(result: dict[str, Any]) -> str:
     if not result["sources"]:
         return "\n".join(lines + ["(no retrieved evidence)"])
     for source in result["sources"]:
-        lines.append(f"[{source['label']}] {source['section']} | {source['pages']}")
+        lines.append(f"[{source['label']}] {source.get('title') or 'Untitled'} | {source['section']} | {source['pages']}")
     return "\n".join(lines)

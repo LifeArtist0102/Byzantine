@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "byzantine"
-version = "0.1.0"
-description = "Evidence-grounded RAG agent for The Oxford Handbook of Byzantine Studies"
+version = "0.2.0"
+description = "Local evidence-grounded Byzantine history research agent"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
 dependencies = [
@@ -14,6 +14,8 @@ dependencies = [
     "pydantic>=2.0",
     "PyYAML>=6.0",
     "typer>=0.15",
+    "platformdirs>=4.3",
+    "PyMuPDF>=1.24",
 ]
 
 [project.optional-dependencies]
@@ -24,14 +26,14 @@ rag = [
     "FlagEmbedding>=1.3",
 ]
 app = [
-    "fastapi>=0.115",
-    "uvicorn[standard]>=0.34",
     "streamlit>=1.42",
 ]
 generation = [
     "openai>=1.0",
     "python-dotenv>=1.0",
 ]
+ocr = ["paddleocr>=2.9", "paddlepaddle>=3.0"]
+local = ["byzantine[rag,app,generation]"]
 dev = ["pytest>=8.0", "ruff>=0.9"]
 
 [project.scripts]
@@ -42,6 +44,7 @@ byzantine-index = "byzantine.indexing.cli:app"
 byzantine-download-model = "byzantine.indexing.download_model:app"
 byzantine-search = "byzantine.retrieval.cli:app"
 byzantine-ask = "byzantine.workflows.ask_cli:app"
+byzantine-app = "byzantine.app:main"
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

@@ -1,12 +1,12 @@
-book_id: oxford_handbook_byzantine_studies
-title: The Oxford Handbook of Byzantine Studies
+# Compatibility configuration for the legacy command-line pipeline only.
+# The Streamlit multi-document application stores bibliography and processing
+# state per document in SQLite; it does not use this file.
+book_id: legacy_single_document
+title: Local legacy source document
 language: en
-edition: PDF edition supplied by the project owner
-
-# Source PDFs are intentionally not stored in Git. Pass their location at runtime.
+edition: Local PDF edition
 source_pdf: null
 
-# MVP retrieval defaults; no embeddings are created in phase 1.
 chunking:
   target_characters: 2400
   min_characters: 700
@@ -17,8 +17,6 @@ quality_gate:
   min_extracted_characters_per_text_page: 120
   max_blank_page_ratio: 0.08
 
-# The handbook's main historical coverage. These bounds prevent publication
-# years in scholarly citations from becoming historical-time metadata.
 metadata:
   historical_year_min: 200
   historical_year_max: 1500
@@ -28,12 +26,12 @@ embedding:
   local_model_path: models/bge-m3
   max_length: 2048
   batch_size_cpu: 2
-  collection_name: byzantine_bge_m3_v1
+  collection_name: byzantine_library_v1
 
 generation:
   provider: deepseek
   base_url: https://api.deepseek.com
-  model: deepseek-v4-flash
+  model: deepseek-chat
   temperature: 0.1
   max_output_tokens: 1200
   max_evidence_characters: 2200
