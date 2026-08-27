@@ -6,7 +6,7 @@ from byzantine.citations import format_chicago_note, format_gbt7714
 from byzantine.models.document import BibliographicMetadata
 from byzantine.retrieval.hybrid import reciprocal_rank_fusion
 from byzantine.storage.database import LibraryDatabase
-from byzantine.workflows.process_document import process_document
+from byzantine.workflows.process_document import _extract_pdf, process_document
 
 
 def _document(database: LibraryDatabase, file_hash: str = "a" * 64):
@@ -101,3 +101,19 @@ def test_pdf_import_persists_page_and_bbox(tmp_path, monkeypatch):
     assert region.page == 1
     assert region.coordinate_space == "pdf_points"
     assert region.bbox is not None
+
+
+def test_pdf_layout_blocks_are_aggregated_into_one_evidence_chunk(tmp_path):
+    import fitz
+
+    source = tmp_path / "blocks.pdf"
+    pdf = fitz.open()
+    page = pdf.new_page()
+    for y, text in ((72, "First paragraph."), (120, "Second paragraph."), (168, "Third paragraph.")):
+        page.insert_text((72, y), text)
+    pdf.save(source)
+    pdf.close()
+    chunks, page_count = _extract_pdf(source, "doc_test")
+    assert page_count == 1
+    assert len(chunks) == 1
+    assert len(chunks[0]["source_regions"]) == 3

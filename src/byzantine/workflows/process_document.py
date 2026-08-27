@@ -46,14 +46,57 @@ def _extract_pdf(path: Path, document_id: str) -> tuple[list[dict[str, Any]], in
     chunks: list[dict[str, Any]] = []
     with fitz.open(path) as pdf:
         for page_number, page in enumerate(pdf, start=1):
-            blocks = page.get_text("blocks")
+            # A PDF page often has dozens of layout-level blocks (lines,
+            # footnotes, headers). Vectorising every block produces tens of
+            # thousands of tiny vectors for one book. Keep page provenance but
+            # combine neighbouring prose blocks into retrieval-sized passages.
+            blocks = sorted(page.get_text("blocks"), key=lambda block: (block[1], block[0]))
+            buffer: list[str] = []
+            regions: list[dict[str, Any]] = []
+
+            def emit(
+                buffer: list[str] = buffer,
+                regions: list[dict[str, Any]] = regions,
+                page_number: int = page_number,
+            ) -> None:
+                if not buffer:
+                    return
+                text = "\n\n".join(buffer).strip()
+                if text:
+                    chunks.append(
+                        {
+                            "chunk_id": "",
+                            "chunk_index": 0,
+                            "section_path": [f"PDF page {page_number}"],
+                            "text": text,
+                            "search_text": text,
+                            "page_start": page_number,
+                            "page_end": page_number,
+                            "source_regions": regions.copy(),
+                            "metadata": {},
+                        }
+                    )
+                buffer.clear()
+                regions.clear()
+
             for block_index, block in enumerate(blocks):
                 x0, y0, x1, y1, text, *_ = block
                 text = str(text).strip()
                 if not text:
                     continue
                 region = {"page": page_number, "region_id": f"region_{page_number}_{block_index}", "bbox": [x0, y0, x1, y1], "coordinate_space": "pdf_points", "page_width": page.rect.width, "page_height": page.rect.height}
-                chunks.extend(_text_chunks(text, document_id=document_id, source_regions=[region], page=page_number))
+                if buffer and len("\n\n".join(buffer)) + len(text) + 2 > 2200:
+                    emit()
+                # Very long blocks are exceptional; split only those while
+                # retaining the same source rectangle for every resulting part.
+                for part in [text[offset:offset + 2600] for offset in range(0, len(text), 2600)]:
+                    if buffer and len("\n\n".join(buffer)) + len(part) + 2 > 2200:
+                        emit()
+                    buffer.append(part)
+                    regions.append(region)
+                    if len(part) >= 2600:
+                        emit()
+            emit()
         for index, chunk in enumerate(chunks):
             chunk["chunk_id"] = f"{document_id}_chunk_{index:05d}"
             chunk["chunk_index"] = index
@@ -84,6 +127,48 @@ def _extract_image(path: Path, document_id: str) -> tuple[list[dict[str, Any]], 
     return chunks, 1
 
 
+def _extract_enrich_save_index(
+    *,
+    source: Path,
+    document: DocumentRecord,
+    database: LibraryDatabase,
+    root: Path,
+    seed_path: Path | None,
+) -> DocumentRecord:
+    """Run the reusable extraction/indexing tail for new or retried documents."""
+    database.update_document(document.document_id, status="extracting", error_message=None)
+    if source.suffix.lower() == ".pdf":
+        chunks, page_count = _extract_pdf(source, document.document_id)
+    elif source.suffix.lower() in {".txt", ".md", ".markdown"}:
+        chunks, page_count = _extract_text(source, document.document_id)
+    else:
+        database.update_document(document.document_id, status="ocr_processing")
+        chunks, page_count = _extract_image(source, document.document_id)
+    if not chunks:
+        raise ValueError("未从文件中提取到可检索文本。")
+    database.update_document(document.document_id, status="enriching", page_count=page_count)
+    seed = load_seed(seed_path) if seed_path else {}
+    chunks = [enrich_chunk(chunk, seed) for chunk in chunks]
+    # Remove stale vectors first. This matters when a previous interrupted
+    # attempt created more chunks than the current, improved chunker.
+    try:
+        from byzantine.indexing.library_index import delete_evidence
+
+        delete_evidence([item.chunk_id for item in database.document_evidence(document.document_id)], qdrant_path=str(root / "qdrant"))
+    except RuntimeError:
+        pass
+    database.save_chunks(document.document_id, chunks)
+    try:
+        from byzantine.indexing.library_index import upsert_evidence
+
+        database.update_document(document.document_id, status="indexing")
+        upsert_evidence(database.document_evidence(document.document_id), qdrant_path=str(root / "qdrant"))
+    except RuntimeError as exc:
+        database.update_document(document.document_id, error_message=f"向量索引未建立：{exc}")
+    database.update_document(document.document_id, status="ready", page_count=page_count)
+    return database.get_document(document.document_id)
+
+
 def process_document(source: Path, *, collection_id: str, metadata: BibliographicMetadata, database: LibraryDatabase | None = None, seed_path: Path | None = None) -> DocumentRecord:
     """Synchronously process one allowed upload; failures remain visible in SQLite."""
     if source.suffix.lower() not in SUPPORTED_SUFFIXES:
@@ -97,34 +182,35 @@ def process_document(source: Path, *, collection_id: str, metadata: Bibliographi
     destination.mkdir(parents=True, exist_ok=True)
     stored_source = destination / f"source{source.suffix.lower()}"
     shutil.copy2(source, stored_source)
-    db.update_document(document.document_id, file_path=str(stored_source), status="extracting")
+    db.update_document(document.document_id, file_path=str(stored_source))
     try:
-        if source.suffix.lower() == ".pdf":
-            chunks, page_count = _extract_pdf(stored_source, document.document_id)
-        elif source.suffix.lower() in {".txt", ".md", ".markdown"}:
-            chunks, page_count = _extract_text(stored_source, document.document_id)
-        else:
-            db.update_document(document.document_id, status="ocr_processing")
-            chunks, page_count = _extract_image(stored_source, document.document_id)
-        if not chunks:
-            raise ValueError("未从文件中提取到可检索文本。")
-        db.update_document(document.document_id, status="enriching", page_count=page_count)
-        seed = load_seed(seed_path) if seed_path else {}
-        chunks = [enrich_chunk(chunk, seed) for chunk in chunks]
-        db.save_chunks(document.document_id, chunks)
-        # FTS5 is always available. When the optional RAG dependency is installed,
-        # BGE-M3 and Qdrant receive the identical Evidence payload.
-        try:
-            from byzantine.indexing.library_index import upsert_evidence
-
-            db.update_document(document.document_id, status="indexing")
-            upsert_evidence(db.document_evidence(document.document_id), qdrant_path=str(root / "qdrant"))
-        except RuntimeError as exc:
-            # A text-only library remains usable; the reason is recorded rather
-            # than pretending that dense indexing completed.
-            db.update_document(document.document_id, error_message=f"向量索引未建立：{exc}")
-        db.update_document(document.document_id, status="ready", page_count=page_count)
+        return _extract_enrich_save_index(
+            source=stored_source,
+            document=document,
+            database=db,
+            root=root,
+            seed_path=seed_path,
+        )
     except Exception as exc:
         db.update_document(document.document_id, status="failed", error_message=str(exc))
         raise
-    return db.get_document(document.document_id)
+
+
+def reprocess_document(document_id: str, *, database: LibraryDatabase, seed_path: Path | None = None) -> DocumentRecord:
+    """Retry a local document without a new browser upload or a new document ID."""
+    document = database.get_document(document_id)
+    source = Path(document.file_path)
+    if not source.is_file():
+        raise FileNotFoundError("找不到本地原文件，无法重新处理。请重新上传该文献。")
+    root = ensure_app_data_dir()
+    try:
+        return _extract_enrich_save_index(
+            source=source,
+            document=document,
+            database=database,
+            root=root,
+            seed_path=seed_path,
+        )
+    except Exception as exc:
+        database.update_document(document_id, status="failed", error_message=str(exc))
+        raise

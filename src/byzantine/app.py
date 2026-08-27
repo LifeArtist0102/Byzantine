@@ -21,7 +21,7 @@ from byzantine.research.services import (
 )
 from byzantine.retrieval.hybrid import hybrid_search, keyword_evidence
 from byzantine.storage.database import LibraryDatabase
-from byzantine.workflows.process_document import process_document
+from byzantine.workflows.process_document import process_document, reprocess_document
 
 
 def _database() -> LibraryDatabase:
@@ -88,6 +88,16 @@ def _library_page(st: Any, database: LibraryDatabase) -> None:
     st.header("资料库")
     documents = database.list_documents()
     st.dataframe([{"文献": item.title, "作者": item.author, "资料库": item.collection_id, "类型": item.source_type, "页数": item.page_count, "状态": item.status, "错误": item.error_message} for item in documents], use_container_width=True)
+    retryable = [item for item in documents if item.status in {"failed", "indexing", "extracting", "enriching"}]
+    if retryable:
+        target = st.selectbox("重新处理未完成文献", retryable, format_func=lambda item: f"{item.title}（{item.status}）")
+        if st.button("使用改进切块重新处理"):
+            try:
+                with st.spinner("正在重新提取、聚合段落并建立向量索引……"):
+                    document = reprocess_document(target.document_id, database=database, seed_path=Path("config/entity_seed.yaml"))
+                st.success(f"重新处理完成：{document.title}（{document.status}）")
+            except Exception as exc:  # noqa: BLE001 - show retry failure to the researcher.
+                st.error(f"重新处理失败：{exc}")
     st.caption("删除文献会同时清除该文献的 SQLite/FTS 记录；Qdrant 向量删除将在向量索引可用时同步执行。")
 
 

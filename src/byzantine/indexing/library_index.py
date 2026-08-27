@@ -45,14 +45,18 @@ def upsert_evidence(evidence: Sequence[Evidence], *, qdrant_path: str, collectio
         return
     _, _, client_class, models = _dependencies()
     model = _load_model()
-    output = model.encode([item.text for item in evidence], batch_size=min(8, len(evidence)), max_length=8192, return_dense=True, return_sparse=False, return_colbert_vecs=False)
+    batch_size = max(1, int(os.getenv("BYZANTINE_EMBEDDING_BATCH_SIZE", "8")))
     client = client_class(path=qdrant_path)
     try:
-        if not client.collection_exists(collection_name):
-            client.create_collection(collection_name, vectors_config=models.VectorParams(size=len(output["dense_vecs"][0]), distance=models.Distance.COSINE))
-            for field in ("document_id", "collection_id", "collection_type", "source_type", "language", "metadata.people", "metadata.places", "metadata.topics"):
-                client.create_payload_index(collection_name, field, models.PayloadSchemaType.KEYWORD)
-        client.upsert(collection_name, points=[models.PointStruct(id=qdrant_id(item.chunk_id), vector=vector.tolist(), payload={"evidence": item.model_dump(mode="json"), "chunk_id": item.chunk_id, "document_id": item.document_id, "collection_id": item.collection_id, "collection_type": item.collection_type, "source_type": item.source_type, "language": item.language, "metadata": item.metadata}) for item, vector in zip(evidence, output["dense_vecs"], strict=True)], wait=True)
+        for start in range(0, len(evidence), batch_size):
+            batch = evidence[start:start + batch_size]
+            output = model.encode([item.text for item in batch], batch_size=batch_size, max_length=4096, return_dense=True, return_sparse=False, return_colbert_vecs=False)
+            if not client.collection_exists(collection_name):
+                client.create_collection(collection_name, vectors_config=models.VectorParams(size=len(output["dense_vecs"][0]), distance=models.Distance.COSINE))
+                for field in ("document_id", "collection_id", "collection_type", "source_type", "language", "metadata.people", "metadata.places", "metadata.topics"):
+                    client.create_payload_index(collection_name, field, models.PayloadSchemaType.KEYWORD)
+            client.upsert(collection_name, points=[models.PointStruct(id=qdrant_id(item.chunk_id), vector=vector.tolist(), payload={"evidence": item.model_dump(mode="json"), "chunk_id": item.chunk_id, "document_id": item.document_id, "collection_id": item.collection_id, "collection_type": item.collection_type, "source_type": item.source_type, "language": item.language, "metadata": item.metadata}) for item, vector in zip(batch, output["dense_vecs"], strict=True)], wait=True)
+            print(f"已向量化 {min(start + len(batch), len(evidence))}/{len(evidence)} 条证据", flush=True)
     finally:
         client.close()
 
