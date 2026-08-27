@@ -177,6 +177,19 @@ def process_document(source: Path, *, collection_id: str, metadata: Bibliographi
     db = database or LibraryDatabase(root / "library.db")
     db.initialize()
     digest = file_hash(source)
+    existing = db.find_duplicate(digest)
+    if existing:
+        document = db.get_document(str(existing["document_id"]))
+        stored_directory = root / "documents" / document.document_id
+        stored_directory.mkdir(parents=True, exist_ok=True)
+        stored_source = stored_directory / f"source{source.suffix.lower()}"
+        if document.status == "ready" and Path(document.file_path).is_file():
+            raise ValueError(f"该文件已经导入：{document.title}（{document.document_id}）")
+        # A previous interrupted import, or an early-version record missing its
+        # file_path, can be repaired safely using the same file hash.
+        shutil.copy2(source, stored_source)
+        db.update_document(document.document_id, file_path=str(stored_source))
+        return reprocess_document(document.document_id, database=db, seed_path=seed_path)
     document = db.create_document(collection_id=collection_id, metadata=metadata, file_path="", file_hash=digest, mime_type=mimetypes.guess_type(source.name)[0] or "application/octet-stream")
     destination = root / "documents" / document.document_id
     destination.mkdir(parents=True, exist_ok=True)
@@ -201,7 +214,12 @@ def reprocess_document(document_id: str, *, database: LibraryDatabase, seed_path
     document = database.get_document(document_id)
     source = Path(document.file_path)
     if not source.is_file():
-        raise FileNotFoundError("找不到本地原文件，无法重新处理。请重新上传该文献。")
+        root = ensure_app_data_dir()
+        candidates = sorted((root / "documents" / document_id).glob("source.*"))
+        if not candidates:
+            raise FileNotFoundError("找不到本地原文件，无法重新处理。请重新上传该文献。")
+        source = candidates[0]
+        database.update_document(document_id, file_path=str(source))
     root = ensure_app_data_dir()
     try:
         return _extract_enrich_save_index(

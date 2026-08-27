@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from byzantine.citations import format_chicago_note, format_gbt7714
 from byzantine.models.document import BibliographicMetadata
 from byzantine.retrieval.hybrid import reciprocal_rank_fusion
 from byzantine.storage.database import LibraryDatabase
-from byzantine.workflows.process_document import _extract_pdf, process_document
+from byzantine.workflows.process_document import _extract_pdf, process_document, reprocess_document
 
 
 def _document(database: LibraryDatabase, file_hash: str = "a" * 64):
@@ -117,3 +119,25 @@ def test_pdf_layout_blocks_are_aggregated_into_one_evidence_chunk(tmp_path):
     assert page_count == 1
     assert len(chunks) == 1
     assert len(chunks[0]["source_regions"]) == 3
+
+
+def test_reprocess_recovers_legacy_missing_file_path(tmp_path, monkeypatch):
+    from byzantine.indexing import library_index
+
+    monkeypatch.setenv("BYZANTINE_DATA_DIR", str(tmp_path / "app-data"))
+    monkeypatch.setattr(library_index, "upsert_evidence", lambda *args, **kwargs: None)
+    monkeypatch.setattr(library_index, "delete_evidence", lambda *args, **kwargs: None)
+    source = tmp_path / "chronicle.txt"
+    source.write_text("A source paragraph about Constantinople.", encoding="utf-8")
+    database = LibraryDatabase(tmp_path / "app-data" / "library.db")
+    original = process_document(source, collection_id="personal", metadata=BibliographicMetadata(title="Chronicle"), database=database)
+    database.update_document(original.document_id, file_path="")
+
+    repaired = reprocess_document(original.document_id, database=database)
+    assert repaired.file_path.endswith("source.txt")
+    assert Path(repaired.file_path).is_file()
+
+    database.update_document(original.document_id, file_path="")
+    duplicate_retry = process_document(source, collection_id="personal", metadata=BibliographicMetadata(title="Chronicle"), database=database)
+    assert duplicate_retry.document_id == original.document_id
+    assert Path(duplicate_retry.file_path).is_file()

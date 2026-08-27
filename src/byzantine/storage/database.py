@@ -149,7 +149,7 @@ class LibraryDatabase:
         return [DocumentRecord(**{**dict(row), "extra": json.loads(row["metadata_json"])}) for row in rows]
 
     def update_document(self, document_id: str, **updates: Any) -> None:
-        allowed = {"title", "author", "translator", "publisher", "publication_year", "edition", "language", "source_type", "page_count", "status", "error_message"}
+        allowed = {"title", "author", "translator", "publisher", "publication_year", "edition", "language", "source_type", "file_path", "page_count", "status", "error_message"}
         changes = {key: value for key, value in updates.items() if key in allowed}
         if not changes:
             return
