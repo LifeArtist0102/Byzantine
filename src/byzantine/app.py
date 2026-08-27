@@ -108,10 +108,11 @@ def _library_page(st: Any, database: LibraryDatabase) -> None:
         if st.button("永久删除所选文献", type="secondary", disabled=not confirmed):
             try:
                 delete_document_from_library(target.document_id, database=database)
-                st.success(f"已删除《{target.title}》及其所有本地派生记录。")
-                st.rerun()
             except Exception as exc:  # noqa: BLE001 - keep destructive-operation failure visible.
                 st.error(f"删除失败，未完成删除：{exc}")
+            else:
+                st.success(f"已删除《{target.title}》及其所有本地派生记录。")
+                st.rerun()
 
 
 def _upload_page(st: Any, database: LibraryDatabase) -> None:
