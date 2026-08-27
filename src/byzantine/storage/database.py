@@ -228,20 +228,20 @@ class LibraryDatabase:
         item_id = f"item_{uuid.uuid4().hex}"
         snapshot = [item.model_dump(mode="json") for item in evidence]
         with self.connect() as connection:
-            connection.execute("INSERT INTO topic_items VALUES(?,?,?,?,?,?,?,?,?,?,?)", (item_id, topic_id, item_type, question, answer, None, None, json.dumps(snapshot, ensure_ascii=False), note, utc_now()))
+            connection.execute("INSERT INTO topic_items VALUES(?,?,?,?,?,?,?,?,?,?)", (item_id, topic_id, item_type, question, answer, None, None, json.dumps(snapshot, ensure_ascii=False), note, utc_now()))
         return item_id
 
     def create_claim(self, claim_text: str, claim_status: str = "draft", user_note: str | None = None) -> str:
         claim_id, now = f"claim_{uuid.uuid4().hex}", utc_now()
         with self.connect() as connection:
-            connection.execute("INSERT INTO claims VALUES(?,?,?,?,?)", (claim_id, claim_text, claim_status, user_note, now, now))
+            connection.execute("INSERT INTO claims VALUES(?,?,?,?,?,?)", (claim_id, claim_text, claim_status, user_note, now, now))
         return claim_id
 
     def link_claim_evidence(self, claim_id: str, evidence: Evidence, relation_type: str, *, strength: str | None = None, user_note: str | None = None) -> None:
         if relation_type not in {"support", "oppose", "qualify", "context"}:
             raise ValueError("证据关系必须是 support、oppose、qualify 或 context")
         with self.connect() as connection:
-            connection.execute("INSERT OR REPLACE INTO claim_evidence VALUES(?,?,?,?,?,?,?,?)", (claim_id, evidence.evidence_id, relation_type, strength, user_note, evidence.model_dump_json(), utc_now()))
+            connection.execute("INSERT OR REPLACE INTO claim_evidence VALUES(?,?,?,?,?,?,?)", (claim_id, evidence.evidence_id, relation_type, strength, user_note, evidence.model_dump_json(), utc_now()))
 
     def save_source_profile(self, document_id: str, profile: dict[str, Any], review_status: str) -> None:
         with self.connect() as connection:
@@ -273,6 +273,21 @@ class LibraryDatabase:
     def delete_document(self, document_id: str) -> list[str]:
         with self.connect() as connection:
             rows = connection.execute("SELECT chunk_id FROM chunks WHERE document_id=?", (document_id,)).fetchall()
+            # Research records keep evidence snapshots rather than fragile live
+            # foreign keys. Delete only entries that explicitly mention this
+            # document, leaving unrelated topics and claims intact.
+            marker = f"%{document_id}%"
+            connection.execute(
+                "DELETE FROM topic_items WHERE document_id=? OR evidence_snapshot LIKE ?",
+                (document_id, marker),
+            )
+            connection.execute("DELETE FROM claim_evidence WHERE evidence_snapshot LIKE ?", (marker,))
+            connection.execute("DELETE FROM comparisons WHERE selected_document_ids LIKE ?", (marker,))
+            connection.execute("DELETE FROM audits WHERE selected_document_ids LIKE ?", (marker,))
+            connection.execute(
+                "DELETE FROM contradictions WHERE evidence_side_a LIKE ? OR evidence_side_b LIKE ?",
+                (marker, marker),
+            )
             connection.execute("DELETE FROM chunks_fts WHERE document_id=?", (document_id,))
             connection.execute("DELETE FROM documents WHERE document_id=?", (document_id,))
         return [row["chunk_id"] for row in rows]

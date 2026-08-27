@@ -8,6 +8,7 @@ from byzantine.citations import format_chicago_note, format_gbt7714
 from byzantine.models.document import BibliographicMetadata
 from byzantine.retrieval.hybrid import reciprocal_rank_fusion
 from byzantine.storage.database import LibraryDatabase
+from byzantine.workflows.delete_document import delete_document_from_library
 from byzantine.workflows.process_document import _extract_pdf, process_document, reprocess_document
 
 
@@ -141,3 +142,39 @@ def test_reprocess_recovers_legacy_missing_file_path(tmp_path, monkeypatch):
     duplicate_retry = process_document(source, collection_id="personal", metadata=BibliographicMetadata(title="Chronicle"), database=database)
     assert duplicate_retry.document_id == original.document_id
     assert Path(duplicate_retry.file_path).is_file()
+
+
+def test_delete_document_removes_vectors_records_and_stored_copy(tmp_path, monkeypatch):
+    from byzantine.indexing import library_index
+
+    root = tmp_path / "app-data"
+    monkeypatch.setenv("BYZANTINE_DATA_DIR", str(root))
+    deleted_vectors: list[str] = []
+    monkeypatch.setattr(
+        library_index,
+        "delete_evidence",
+        lambda chunk_ids, **kwargs: deleted_vectors.extend(chunk_ids),
+    )
+    database = LibraryDatabase(root / "library.db")
+    database.initialize()
+    document = _document(database)
+    stored = root / "documents" / document.document_id
+    stored.mkdir(parents=True)
+    (stored / "source.txt").write_text("source", encoding="utf-8")
+    database.update_document(document.document_id, file_path=str(stored / "source.txt"))
+    database.save_chunks(document.document_id, [_chunk(document.document_id)])
+    evidence = database.document_evidence(document.document_id)[0]
+    topic = database.create_topic("Test topic")
+    database.add_topic_item(topic, "answer", evidence=[evidence])
+    claim = database.create_claim("Test claim")
+    database.link_claim_evidence(claim, evidence, "support")
+
+    delete_document_from_library(document.document_id, database=database)
+
+    assert deleted_vectors == [evidence.chunk_id]
+    assert not stored.exists()
+    assert database.list_documents() == []
+    assert database.fts_search("Alexios") == []
+    with database.connect() as connection:
+        assert connection.execute("SELECT count(*) FROM topic_items").fetchone()[0] == 0
+        assert connection.execute("SELECT count(*) FROM claim_evidence").fetchone()[0] == 0

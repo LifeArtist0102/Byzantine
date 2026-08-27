@@ -21,6 +21,7 @@ from byzantine.research.services import (
 )
 from byzantine.retrieval.hybrid import hybrid_search, keyword_evidence
 from byzantine.storage.database import LibraryDatabase
+from byzantine.workflows.delete_document import delete_document_from_library
 from byzantine.workflows.process_document import process_document, reprocess_document
 
 
@@ -98,7 +99,19 @@ def _library_page(st: Any, database: LibraryDatabase) -> None:
                 st.success(f"重新处理完成：{document.title}（{document.status}）")
             except Exception as exc:  # noqa: BLE001 - show retry failure to the researcher.
                 st.error(f"重新处理失败：{exc}")
-    st.caption("删除文献会同时清除该文献的 SQLite/FTS 记录；Qdrant 向量删除将在向量索引可用时同步执行。")
+    st.divider()
+    st.subheader("删除文献")
+    st.warning("此操作不可恢复：会删除该文献的向量、文本、书目信息、关联证据记录和本应用保存的文件副本。不会删除你最初选择的外部原始文件。")
+    if documents:
+        target = st.selectbox("选择要删除的文献", documents, format_func=lambda item: f"{item.title}（{item.document_id[-8:]}）", key="delete-document")
+        confirmed = st.checkbox(f"我确认永久删除《{target.title}》的所有本地记录", key="delete-confirmation")
+        if st.button("永久删除所选文献", type="secondary", disabled=not confirmed):
+            try:
+                delete_document_from_library(target.document_id, database=database)
+                st.success(f"已删除《{target.title}》及其所有本地派生记录。")
+                st.rerun()
+            except Exception as exc:  # noqa: BLE001 - keep destructive-operation failure visible.
+                st.error(f"删除失败，未完成删除：{exc}")
 
 
 def _upload_page(st: Any, database: LibraryDatabase) -> None:
