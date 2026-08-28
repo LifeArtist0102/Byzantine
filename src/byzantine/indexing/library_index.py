@@ -25,10 +25,18 @@ def _dependencies() -> tuple[Any, Any, Any, Any]:
     try:
         import torch
         from FlagEmbedding import BGEM3FlagModel
-        from qdrant_client import QdrantClient, models
     except ImportError as exc:  # pragma: no cover
         raise RuntimeError('向量索引依赖未安装。请运行：pip install -e ".[rag]"') from exc
+    QdrantClient, models = _qdrant_dependencies()
     return torch, BGEM3FlagModel, QdrantClient, models
+
+
+def _qdrant_dependencies() -> tuple[Any, Any]:
+    try:
+        from qdrant_client import QdrantClient, models
+    except ImportError as exc:  # pragma: no cover
+        raise RuntimeError('Qdrant 依赖未安装。请运行：pip install -e ".[rag]"') from exc
+    return QdrantClient, models
 
 
 def _load_model() -> Any:
@@ -145,7 +153,9 @@ def search_evidence(
         )
     if collection_ids:
         conditions.append(
-            models.FieldCondition(key="collection_id", match=models.MatchAny(any=list(collection_ids)))
+            models.FieldCondition(
+                key="collection_id", match=models.MatchAny(any=list(collection_ids))
+            )
         )
     client = client_class(path=qdrant_path)
     try:
@@ -183,3 +193,39 @@ def delete_evidence(
             )
     finally:
         client.close()
+
+
+def index_status(*, qdrant_path: str, collection_name: str = DEFAULT_COLLECTION) -> dict[str, Any]:
+    """Return a lightweight health report without loading the embedding model."""
+    client_class, _ = _qdrant_dependencies()
+    client = client_class(path=qdrant_path)
+    try:
+        if not client.collection_exists(collection_name):
+            return {"healthy": False, "points": 0, "message": "向量集合尚未建立"}
+        points = int(client.count(collection_name, exact=True).count)
+        return {"healthy": True, "points": points, "message": "向量索引运行正常"}
+    finally:
+        client.close()
+
+
+def rebuild_index(
+    evidence: Sequence[Evidence],
+    *,
+    qdrant_path: str,
+    collection_name: str = DEFAULT_COLLECTION,
+    progress: Callable[[int, int], None] | None = None,
+) -> None:
+    """Replace the collection and rebuild it from canonical SQLite evidence."""
+    client_class, _ = _qdrant_dependencies()
+    client = client_class(path=qdrant_path)
+    try:
+        if client.collection_exists(collection_name):
+            client.delete_collection(collection_name)
+    finally:
+        client.close()
+    upsert_evidence(
+        evidence,
+        qdrant_path=qdrant_path,
+        collection_name=collection_name,
+        progress=progress,
+    )

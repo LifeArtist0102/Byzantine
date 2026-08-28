@@ -9,13 +9,24 @@ from byzantine.models.document import BibliographicMetadata
 from byzantine.retrieval.hybrid import reciprocal_rank_fusion
 from byzantine.storage.database import LibraryDatabase
 from byzantine.workflows.delete_document import delete_document_from_library
-from byzantine.workflows.process_document import _extract_pdf, process_document, reprocess_document
+from byzantine.workflows.process_document import (
+    _extract_docx,
+    _extract_pdf,
+    process_document,
+    reprocess_document,
+)
 
 
 def _document(database: LibraryDatabase, file_hash: str = "a" * 64):
     return database.create_document(
         collection_id="personal",
-        metadata=BibliographicMetadata(title="Anna Komnene", author="Anna Komnene", edition="2nd ed.", language="English", source_type="translation"),
+        metadata=BibliographicMetadata(
+            title="Anna Komnene",
+            author="Anna Komnene",
+            edition="2nd ed.",
+            language="English",
+            source_type="translation",
+        ),
         file_path="C:/library/alexiad.txt",
         file_hash=file_hash,
         mime_type="text/plain",
@@ -31,7 +42,16 @@ def _chunk(document_id: str) -> dict[str, object]:
         "search_text": "Alexios prepared the army at Constantinople.",
         "page_start": 12,
         "page_end": 12,
-        "source_regions": [{"page": 12, "region_id": "region_12_03", "bbox": [82, 315, 506, 468], "coordinate_space": "pdf_points", "page_width": 595, "page_height": 842}],
+        "source_regions": [
+            {
+                "page": 12,
+                "region_id": "region_12_03",
+                "bbox": [82, 315, 506, 468],
+                "coordinate_space": "pdf_points",
+                "page_width": 595,
+                "page_height": 842,
+            }
+        ],
         "metadata": {"people": ["Alexios I"], "places": ["Constantinople"], "topics": ["warfare"]},
     }
 
@@ -66,6 +86,26 @@ def test_documents_do_not_overwrite_and_duplicate_is_rejected(tmp_path):
         _document(database, "1" * 64)
 
 
+def test_contradiction_history_returns_parsed_evidence(tmp_path):
+    database = LibraryDatabase(tmp_path / "library.db")
+    database.initialize()
+    document = _document(database)
+    database.save_chunks(document.document_id, [_chunk(document.document_id)])
+    evidence = database.document_evidence(document.document_id)[0]
+
+    database.save_contradiction(
+        subject="Alexios prepared the army.",
+        description="A claim and its counter-reading.",
+        classification="perspective",
+        evidence_side_a=evidence,
+        evidence_side_b=evidence,
+    )
+
+    history = database.list_contradictions()
+    assert history[0]["subject"] == "Alexios prepared the army."
+    assert history[0]["evidence_side_a"]["document_id"] == document.document_id
+
+
 def test_rrf_deduplicates_and_favors_consistent_results():
     assert reciprocal_rank_fusion([["a", "b"], ["b", "c"]])[:3] == ["b", "a", "c"]
 
@@ -76,9 +116,16 @@ def test_txt_import_preserves_document_scope_and_text_regions(tmp_path, monkeypa
     monkeypatch.setenv("BYZANTINE_DATA_DIR", str(tmp_path / "app-data"))
     monkeypatch.setattr(library_index, "upsert_evidence", lambda *args, **kwargs: None)
     source = tmp_path / "chronicle.txt"
-    source.write_text("Alexios arrived at Constantinople.\n\nThe army was prepared.", encoding="utf-8")
+    source.write_text(
+        "Alexios arrived at Constantinople.\n\nThe army was prepared.", encoding="utf-8"
+    )
     database = LibraryDatabase(tmp_path / "app-data" / "library.db")
-    document = process_document(source, collection_id="personal", metadata=BibliographicMetadata(title="Chronicle", language="English"), database=database)
+    document = process_document(
+        source,
+        collection_id="personal",
+        metadata=BibliographicMetadata(title="Chronicle", language="English"),
+        database=database,
+    )
     evidence = database.document_evidence(document.document_id)
     assert document.status == "ready"
     assert evidence[0].document_id == document.document_id
@@ -99,7 +146,12 @@ def test_pdf_import_persists_page_and_bbox(tmp_path, monkeypatch):
     pdf.save(source)
     pdf.close()
     database = LibraryDatabase(tmp_path / "app-data" / "library.db")
-    document = process_document(source, collection_id="starter", metadata=BibliographicMetadata(title="Test PDF", language="English"), database=database)
+    document = process_document(
+        source,
+        collection_id="starter",
+        metadata=BibliographicMetadata(title="Test PDF", language="English"),
+        database=database,
+    )
     region = database.document_evidence(document.document_id)[0].source_regions[0]
     assert region.page == 1
     assert region.coordinate_space == "pdf_points"
@@ -112,7 +164,11 @@ def test_pdf_layout_blocks_are_aggregated_into_one_evidence_chunk(tmp_path):
     source = tmp_path / "blocks.pdf"
     pdf = fitz.open()
     page = pdf.new_page()
-    for y, text in ((72, "First paragraph."), (120, "Second paragraph."), (168, "Third paragraph.")):
+    for y, text in (
+        (72, "First paragraph."),
+        (120, "Second paragraph."),
+        (168, "Third paragraph."),
+    ):
         page.insert_text((72, y), text)
     pdf.save(source)
     pdf.close()
@@ -120,6 +176,26 @@ def test_pdf_layout_blocks_are_aggregated_into_one_evidence_chunk(tmp_path):
     assert page_count == 1
     assert len(chunks) == 1
     assert len(chunks[0]["source_regions"]) == 3
+
+
+def test_docx_import_preserves_headings_and_tables(tmp_path):
+    from docx import Document as WordDocument
+
+    source = tmp_path / "chronicle.docx"
+    word = WordDocument()
+    word.add_heading("Book I", level=1)
+    word.add_paragraph("Alexios prepared the army at Constantinople.")
+    table = word.add_table(rows=1, cols=2)
+    table.cell(0, 0).text = "Year"
+    table.cell(0, 1).text = "Event"
+    word.save(source)
+
+    chunks, page_count = _extract_docx(source, "doc_test")
+
+    assert page_count is None
+    assert chunks[0]["section_path"] == ["Book I"]
+    assert chunks[0]["source_regions"][0]["coordinate_space"] == "docx_paragraphs"
+    assert "Year | Event" in chunks[-1]["text"]
 
 
 def test_reprocess_recovers_legacy_missing_file_path(tmp_path, monkeypatch):
@@ -131,7 +207,12 @@ def test_reprocess_recovers_legacy_missing_file_path(tmp_path, monkeypatch):
     source = tmp_path / "chronicle.txt"
     source.write_text("A source paragraph about Constantinople.", encoding="utf-8")
     database = LibraryDatabase(tmp_path / "app-data" / "library.db")
-    original = process_document(source, collection_id="personal", metadata=BibliographicMetadata(title="Chronicle"), database=database)
+    original = process_document(
+        source,
+        collection_id="personal",
+        metadata=BibliographicMetadata(title="Chronicle"),
+        database=database,
+    )
     database.update_document(original.document_id, file_path="")
 
     repaired = reprocess_document(original.document_id, database=database)
@@ -139,7 +220,12 @@ def test_reprocess_recovers_legacy_missing_file_path(tmp_path, monkeypatch):
     assert Path(repaired.file_path).is_file()
 
     database.update_document(original.document_id, file_path="")
-    duplicate_retry = process_document(source, collection_id="personal", metadata=BibliographicMetadata(title="Chronicle"), database=database)
+    duplicate_retry = process_document(
+        source,
+        collection_id="personal",
+        metadata=BibliographicMetadata(title="Chronicle"),
+        database=database,
+    )
     assert duplicate_retry.document_id == original.document_id
     assert Path(duplicate_retry.file_path).is_file()
 
@@ -173,7 +259,9 @@ def test_delete_document_removes_vectors_records_and_stored_copy(tmp_path, monke
         topic_id=topic,
     )
     database.add_chat_message(conversation, role="user", content="What did Alexios do?")
-    database.add_chat_message(conversation, role="assistant", content="He prepared the army.", evidence=[evidence])
+    database.add_chat_message(
+        conversation, role="assistant", content="He prepared the army.", evidence=[evidence]
+    )
     database.save_topic_chat_summary(
         topic_id=topic,
         conversation_id=conversation,

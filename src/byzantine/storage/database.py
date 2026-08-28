@@ -125,14 +125,27 @@ class LibraryDatabase:
 
     def collections(self) -> list[dict[str, Any]]:
         with self.connect() as connection:
-            return [dict(row) for row in connection.execute("SELECT * FROM collections ORDER BY collection_type")]
+            return [
+                dict(row)
+                for row in connection.execute("SELECT * FROM collections ORDER BY collection_type")
+            ]
 
     def find_duplicate(self, file_hash: str) -> dict[str, Any] | None:
         with self.connect() as connection:
-            row = connection.execute("SELECT * FROM documents WHERE file_hash=?", (file_hash,)).fetchone()
+            row = connection.execute(
+                "SELECT * FROM documents WHERE file_hash=?", (file_hash,)
+            ).fetchone()
             return dict(row) if row else None
 
-    def create_document(self, *, collection_id: str, metadata: BibliographicMetadata, file_path: str, file_hash: str, mime_type: str) -> DocumentRecord:
+    def create_document(
+        self,
+        *,
+        collection_id: str,
+        metadata: BibliographicMetadata,
+        file_path: str,
+        file_hash: str,
+        mime_type: str,
+    ) -> DocumentRecord:
         duplicate = self.find_duplicate(file_hash)
         if duplicate:
             raise ValueError(f"该文件已经导入：{duplicate['title']}（{duplicate['document_id']}）")
@@ -142,15 +155,32 @@ class LibraryDatabase:
             connection.execute(
                 """INSERT INTO documents(document_id,collection_id,title,author,translator,publisher,publication_year,edition,language,source_type,file_path,file_hash,mime_type,status,created_at,updated_at)
                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (document_id, collection_id, metadata.title, metadata.author, metadata.translator, metadata.publisher,
-                 metadata.publication_year, metadata.edition, metadata.language, metadata.source_type, file_path,
-                 file_hash, mime_type, "uploaded", now, now),
+                (
+                    document_id,
+                    collection_id,
+                    metadata.title,
+                    metadata.author,
+                    metadata.translator,
+                    metadata.publisher,
+                    metadata.publication_year,
+                    metadata.edition,
+                    metadata.language,
+                    metadata.source_type,
+                    file_path,
+                    file_hash,
+                    mime_type,
+                    "uploaded",
+                    now,
+                    now,
+                ),
             )
         return self.get_document(document_id)
 
     def get_document(self, document_id: str) -> DocumentRecord:
         with self.connect() as connection:
-            row = connection.execute("SELECT * FROM documents WHERE document_id=?", (document_id,)).fetchone()
+            row = connection.execute(
+                "SELECT * FROM documents WHERE document_id=?", (document_id,)
+            ).fetchone()
         if not row:
             raise KeyError(f"文献不存在：{document_id}")
         return DocumentRecord(**{**dict(row), "extra": json.loads(row["metadata_json"])})
@@ -164,17 +194,36 @@ class LibraryDatabase:
         query += " ORDER BY updated_at DESC"
         with self.connect() as connection:
             rows = connection.execute(query, params).fetchall()
-        return [DocumentRecord(**{**dict(row), "extra": json.loads(row["metadata_json"])}) for row in rows]
+        return [
+            DocumentRecord(**{**dict(row), "extra": json.loads(row["metadata_json"])})
+            for row in rows
+        ]
 
     def update_document(self, document_id: str, **updates: Any) -> None:
-        allowed = {"title", "author", "translator", "publisher", "publication_year", "edition", "language", "source_type", "file_path", "page_count", "status", "error_message"}
+        allowed = {
+            "title",
+            "author",
+            "translator",
+            "publisher",
+            "publication_year",
+            "edition",
+            "language",
+            "source_type",
+            "file_path",
+            "page_count",
+            "status",
+            "error_message",
+        }
         changes = {key: value for key, value in updates.items() if key in allowed}
         if not changes:
             return
         changes["updated_at"] = utc_now()
         columns = ", ".join(f"{key}=?" for key in changes)
         with self.connect() as connection:
-            connection.execute(f"UPDATE documents SET {columns} WHERE document_id=?", [*changes.values(), document_id])
+            connection.execute(
+                f"UPDATE documents SET {columns} WHERE document_id=?",
+                [*changes.values(), document_id],
+            )
 
     def save_chunks(self, document_id: str, chunks: Sequence[dict[str, Any]]) -> None:
         document = self.get_document(document_id)
@@ -185,14 +234,42 @@ class LibraryDatabase:
                 connection.execute(
                     """INSERT INTO chunks(chunk_id,document_id,collection_id,section_path,chunk_index,text,search_text,page_start,page_end,printed_page_start,printed_page_end,source_regions,prev_chunk_id,next_chunk_id,metadata_json)
                        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                    (chunk["chunk_id"], document_id, document.collection_id, json.dumps(chunk.get("section_path", []), ensure_ascii=False),
-                     chunk["chunk_index"], chunk["text"], chunk.get("search_text", chunk["text"]), chunk.get("page_start"), chunk.get("page_end"),
-                     chunk.get("printed_page_start"), chunk.get("printed_page_end"), json.dumps(chunk.get("source_regions", []), ensure_ascii=False),
-                     chunk.get("prev_chunk_id"), chunk.get("next_chunk_id"), json.dumps(chunk.get("metadata", {}), ensure_ascii=False)),
+                    (
+                        chunk["chunk_id"],
+                        document_id,
+                        document.collection_id,
+                        json.dumps(chunk.get("section_path", []), ensure_ascii=False),
+                        chunk["chunk_index"],
+                        chunk["text"],
+                        chunk.get("search_text", chunk["text"]),
+                        chunk.get("page_start"),
+                        chunk.get("page_end"),
+                        chunk.get("printed_page_start"),
+                        chunk.get("printed_page_end"),
+                        json.dumps(chunk.get("source_regions", []), ensure_ascii=False),
+                        chunk.get("prev_chunk_id"),
+                        chunk.get("next_chunk_id"),
+                        json.dumps(chunk.get("metadata", {}), ensure_ascii=False),
+                    ),
                 )
-                connection.execute("INSERT INTO chunks_fts(chunk_id,document_id,collection_id,search_text) VALUES(?,?,?,?)", (chunk["chunk_id"], document_id, document.collection_id, chunk.get("search_text", chunk["text"])))
+                connection.execute(
+                    "INSERT INTO chunks_fts(chunk_id,document_id,collection_id,search_text) VALUES(?,?,?,?)",
+                    (
+                        chunk["chunk_id"],
+                        document_id,
+                        document.collection_id,
+                        chunk.get("search_text", chunk["text"]),
+                    ),
+                )
 
-    def fts_search(self, query: str, *, document_ids: Sequence[str] = (), collection_ids: Sequence[str] = (), limit: int = 20) -> list[dict[str, Any]]:
+    def fts_search(
+        self,
+        query: str,
+        *,
+        document_ids: Sequence[str] = (),
+        collection_ids: Sequence[str] = (),
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
         if not query.strip():
             return []
         where, params = ["chunks_fts MATCH ?"], [query]
@@ -207,18 +284,35 @@ class LibraryDatabase:
                          bm25(chunks_fts) AS rank
                   FROM chunks_fts JOIN chunks c ON c.chunk_id=chunks_fts.chunk_id
                   JOIN documents d ON d.document_id=c.document_id JOIN collections co ON co.collection_id=c.collection_id
-                  WHERE {' AND '.join(where)} ORDER BY rank LIMIT ?"""
+                  WHERE {" AND ".join(where)} ORDER BY rank LIMIT ?"""
         with self.connect() as connection:
             return [dict(row) for row in connection.execute(sql, params)]
 
     def evidence_from_row(self, row: dict[str, Any]) -> Evidence:
         return Evidence(
-            evidence_id=f"ev_{row['chunk_id']}", chunk_id=row["chunk_id"], document_id=row["document_id"], collection_id=row["collection_id"],
-            collection_type=row["collection_type"], title=row["title"], author=row["author"], translator=row["translator"], edition=row["edition"],
-            publisher=row["publisher"], publication_year=row["publication_year"], language=row["language"], source_type=row["source_type"],
-            section_path=json.loads(row["section_path"]), pdf_page_start=row["page_start"], pdf_page_end=row["page_end"],
-            printed_page_start=row["printed_page_start"], printed_page_end=row["printed_page_end"], source_regions=json.loads(row["source_regions"]),
-            source_file=row["file_path"], text=row["text"], metadata=json.loads(row["metadata_json"]), created_at=utc_now(),
+            evidence_id=f"ev_{row['chunk_id']}",
+            chunk_id=row["chunk_id"],
+            document_id=row["document_id"],
+            collection_id=row["collection_id"],
+            collection_type=row["collection_type"],
+            title=row["title"],
+            author=row["author"],
+            translator=row["translator"],
+            edition=row["edition"],
+            publisher=row["publisher"],
+            publication_year=row["publication_year"],
+            language=row["language"],
+            source_type=row["source_type"],
+            section_path=json.loads(row["section_path"]),
+            pdf_page_start=row["page_start"],
+            pdf_page_end=row["page_end"],
+            printed_page_start=row["printed_page_start"],
+            printed_page_end=row["printed_page_end"],
+            source_regions=json.loads(row["source_regions"]),
+            source_file=row["file_path"],
+            text=row["text"],
+            metadata=json.loads(row["metadata_json"]),
+            created_at=utc_now(),
         )
 
     def document_evidence(self, document_id: str) -> list[Evidence]:
@@ -235,16 +329,26 @@ class LibraryDatabase:
     def create_topic(self, title: str, research_question: str = "", description: str = "") -> str:
         topic_id, now = f"topic_{uuid.uuid4().hex}", utc_now()
         with self.connect() as connection:
-            connection.execute("INSERT INTO research_topics VALUES(?,?,?,?,?,?)", (topic_id, title, research_question, description, now, now))
+            connection.execute(
+                "INSERT INTO research_topics VALUES(?,?,?,?,?,?)",
+                (topic_id, title, research_question, description, now, now),
+            )
         return topic_id
 
     def list_topics(self) -> list[dict[str, Any]]:
         with self.connect() as connection:
-            return [dict(row) for row in connection.execute("SELECT * FROM research_topics ORDER BY updated_at DESC")]
+            return [
+                dict(row)
+                for row in connection.execute(
+                    "SELECT * FROM research_topics ORDER BY updated_at DESC"
+                )
+            ]
 
     def get_topic(self, topic_id: str) -> dict[str, Any]:
         with self.connect() as connection:
-            row = connection.execute("SELECT * FROM research_topics WHERE topic_id=?", (topic_id,)).fetchone()
+            row = connection.execute(
+                "SELECT * FROM research_topics WHERE topic_id=?", (topic_id,)
+            ).fetchone()
         if not row:
             raise KeyError(f"研究专题不存在：{topic_id}")
         return dict(row)
@@ -261,7 +365,15 @@ class LibraryDatabase:
         with self.connect() as connection:
             connection.execute(
                 "INSERT INTO conversations VALUES(?,?,?,?,?,?,?)",
-                (conversation_id, title, topic_id, json.dumps(list(collection_ids)), json.dumps(list(document_ids)), now, now),
+                (
+                    conversation_id,
+                    title,
+                    topic_id,
+                    json.dumps(list(collection_ids)),
+                    json.dumps(list(document_ids)),
+                    now,
+                    now,
+                ),
             )
         return conversation_id
 
@@ -283,10 +395,16 @@ class LibraryDatabase:
 
     def get_conversation(self, conversation_id: str) -> dict[str, Any]:
         with self.connect() as connection:
-            row = connection.execute("SELECT * FROM conversations WHERE conversation_id=?", (conversation_id,)).fetchone()
+            row = connection.execute(
+                "SELECT * FROM conversations WHERE conversation_id=?", (conversation_id,)
+            ).fetchone()
         if not row:
             raise KeyError(f"聊天不存在：{conversation_id}")
-        return {**dict(row), "collection_ids": json.loads(row["collection_ids"]), "document_ids": json.loads(row["document_ids"])}
+        return {
+            **dict(row),
+            "collection_ids": json.loads(row["collection_ids"]),
+            "document_ids": json.loads(row["document_ids"]),
+        }
 
     def update_conversation(
         self,
@@ -308,7 +426,10 @@ class LibraryDatabase:
             changes["document_ids"] = json.dumps(list(document_ids))
         columns = ", ".join(f"{key}=?" for key in changes)
         with self.connect() as connection:
-            connection.execute(f"UPDATE conversations SET {columns} WHERE conversation_id=?", [*changes.values(), conversation_id])
+            connection.execute(
+                f"UPDATE conversations SET {columns} WHERE conversation_id=?",
+                [*changes.values(), conversation_id],
+            )
 
     def add_chat_message(
         self,
@@ -326,9 +447,20 @@ class LibraryDatabase:
         with self.connect() as connection:
             connection.execute(
                 "INSERT INTO chat_messages VALUES(?,?,?,?,?,?,?)",
-                (message_id, conversation_id, role, content, json.dumps(snapshot, ensure_ascii=False), json.dumps(list(labels), ensure_ascii=False), now),
+                (
+                    message_id,
+                    conversation_id,
+                    role,
+                    content,
+                    json.dumps(snapshot, ensure_ascii=False),
+                    json.dumps(list(labels), ensure_ascii=False),
+                    now,
+                ),
             )
-            connection.execute("UPDATE conversations SET updated_at=? WHERE conversation_id=?", (now, conversation_id))
+            connection.execute(
+                "UPDATE conversations SET updated_at=? WHERE conversation_id=?",
+                (now, conversation_id),
+            )
         return message_id
 
     def conversation_messages(self, conversation_id: str) -> list[dict[str, Any]]:
@@ -363,9 +495,22 @@ class LibraryDatabase:
                 """INSERT INTO topic_chat_summaries VALUES(?,?,?,?,?,?,?,?,?)
                    ON CONFLICT(topic_id,conversation_id) DO UPDATE SET title=excluded.title,tags=excluded.tags,
                    summary=excluded.summary,evidence_snapshot=excluded.evidence_snapshot,updated_at=excluded.updated_at""",
-                (summary_id, topic_id, conversation_id, title, json.dumps(list(tags), ensure_ascii=False), summary, json.dumps(snapshot, ensure_ascii=False), now, now),
+                (
+                    summary_id,
+                    topic_id,
+                    conversation_id,
+                    title,
+                    json.dumps(list(tags), ensure_ascii=False),
+                    summary,
+                    json.dumps(snapshot, ensure_ascii=False),
+                    now,
+                    now,
+                ),
             )
-            connection.execute("UPDATE conversations SET topic_id=?, updated_at=? WHERE conversation_id=?", (topic_id, now, conversation_id))
+            connection.execute(
+                "UPDATE conversations SET topic_id=?, updated_at=? WHERE conversation_id=?",
+                (topic_id, now, conversation_id),
+            )
         return summary_id
 
     def topic_chat_summaries(self, topic_id: str) -> list[dict[str, Any]]:
@@ -383,43 +528,118 @@ class LibraryDatabase:
             for row in rows
         ]
 
-    def add_topic_item(self, topic_id: str, item_type: str, *, question: str | None = None, answer: str | None = None, evidence: Sequence[Evidence] = (), note: str | None = None) -> str:
+    def add_topic_item(
+        self,
+        topic_id: str,
+        item_type: str,
+        *,
+        question: str | None = None,
+        answer: str | None = None,
+        evidence: Sequence[Evidence] = (),
+        note: str | None = None,
+    ) -> str:
         item_id = f"item_{uuid.uuid4().hex}"
         snapshot = [item.model_dump(mode="json") for item in evidence]
         with self.connect() as connection:
-            connection.execute("INSERT INTO topic_items VALUES(?,?,?,?,?,?,?,?,?,?)", (item_id, topic_id, item_type, question, answer, None, None, json.dumps(snapshot, ensure_ascii=False), note, utc_now()))
+            connection.execute(
+                "INSERT INTO topic_items VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (
+                    item_id,
+                    topic_id,
+                    item_type,
+                    question,
+                    answer,
+                    None,
+                    None,
+                    json.dumps(snapshot, ensure_ascii=False),
+                    note,
+                    utc_now(),
+                ),
+            )
         return item_id
 
-    def create_claim(self, claim_text: str, claim_status: str = "draft", user_note: str | None = None) -> str:
+    def create_claim(
+        self, claim_text: str, claim_status: str = "draft", user_note: str | None = None
+    ) -> str:
         claim_id, now = f"claim_{uuid.uuid4().hex}", utc_now()
         with self.connect() as connection:
-            connection.execute("INSERT INTO claims VALUES(?,?,?,?,?,?)", (claim_id, claim_text, claim_status, user_note, now, now))
+            connection.execute(
+                "INSERT INTO claims VALUES(?,?,?,?,?,?)",
+                (claim_id, claim_text, claim_status, user_note, now, now),
+            )
         return claim_id
 
-    def link_claim_evidence(self, claim_id: str, evidence: Evidence, relation_type: str, *, strength: str | None = None, user_note: str | None = None) -> None:
+    def link_claim_evidence(
+        self,
+        claim_id: str,
+        evidence: Evidence,
+        relation_type: str,
+        *,
+        strength: str | None = None,
+        user_note: str | None = None,
+    ) -> None:
         if relation_type not in {"support", "oppose", "qualify", "context"}:
             raise ValueError("证据关系必须是 support、oppose、qualify 或 context")
         with self.connect() as connection:
-            connection.execute("INSERT OR REPLACE INTO claim_evidence VALUES(?,?,?,?,?,?,?)", (claim_id, evidence.evidence_id, relation_type, strength, user_note, evidence.model_dump_json(), utc_now()))
+            connection.execute(
+                "INSERT OR REPLACE INTO claim_evidence VALUES(?,?,?,?,?,?,?)",
+                (
+                    claim_id,
+                    evidence.evidence_id,
+                    relation_type,
+                    strength,
+                    user_note,
+                    evidence.model_dump_json(),
+                    utc_now(),
+                ),
+            )
 
-    def save_source_profile(self, document_id: str, profile: dict[str, Any], review_status: str) -> None:
+    def save_source_profile(
+        self, document_id: str, profile: dict[str, Any], review_status: str
+    ) -> None:
         with self.connect() as connection:
-            connection.execute("INSERT INTO source_profiles VALUES(?,?,?,?) ON CONFLICT(document_id) DO UPDATE SET profile_json=excluded.profile_json, review_status=excluded.review_status, updated_at=excluded.updated_at", (document_id, json.dumps(profile, ensure_ascii=False), review_status, utc_now()))
+            connection.execute(
+                "INSERT INTO source_profiles VALUES(?,?,?,?) ON CONFLICT(document_id) DO UPDATE SET profile_json=excluded.profile_json, review_status=excluded.review_status, updated_at=excluded.updated_at",
+                (document_id, json.dumps(profile, ensure_ascii=False), review_status, utc_now()),
+            )
 
     def source_profile(self, document_id: str) -> dict[str, Any] | None:
         with self.connect() as connection:
-            row = connection.execute("SELECT * FROM source_profiles WHERE document_id=?", (document_id,)).fetchone()
-        return {"profile": json.loads(row["profile_json"]), "review_status": row["review_status"], "updated_at": row["updated_at"]} if row else None
+            row = connection.execute(
+                "SELECT * FROM source_profiles WHERE document_id=?", (document_id,)
+            ).fetchone()
+        return (
+            {
+                "profile": json.loads(row["profile_json"]),
+                "review_status": row["review_status"],
+                "updated_at": row["updated_at"],
+            }
+            if row
+            else None
+        )
 
     def save_comparison(self, comparison: dict[str, Any]) -> str:
         comparison_id = str(comparison.get("comparison_id") or f"comparison_{uuid.uuid4().hex}")
         with self.connect() as connection:
-            connection.execute("INSERT OR REPLACE INTO comparisons VALUES(?,?,?,?,?,?,?)", (comparison_id, comparison["question"], json.dumps(comparison["selected_document_ids"]), json.dumps(comparison["dimensions"], ensure_ascii=False), json.dumps(comparison["comparison_cells"], ensure_ascii=False), comparison.get("summary"), comparison.get("created_at") or utc_now()))
+            connection.execute(
+                "INSERT OR REPLACE INTO comparisons VALUES(?,?,?,?,?,?,?)",
+                (
+                    comparison_id,
+                    comparison["question"],
+                    json.dumps(comparison["selected_document_ids"]),
+                    json.dumps(comparison["dimensions"], ensure_ascii=False),
+                    json.dumps(comparison["comparison_cells"], ensure_ascii=False),
+                    comparison.get("summary"),
+                    comparison.get("created_at") or utc_now(),
+                ),
+            )
         return comparison_id
 
     def list_comparisons(self) -> list[dict[str, Any]]:
         with self.connect() as connection:
-            rows = connection.execute("SELECT * FROM comparisons ORDER BY created_at DESC").fetchall()
+            rows = connection.execute(
+                "SELECT * FROM comparisons ORDER BY created_at DESC"
+            ).fetchall()
         return [
             {
                 **dict(row),
@@ -430,21 +650,78 @@ class LibraryDatabase:
             for row in rows
         ]
 
-    def save_audit(self, *, title: str, original_text: str, sentence_results: Sequence[dict[str, Any]], document_ids: Sequence[str] = (), collection_ids: Sequence[str] = ()) -> str:
+    def save_audit(
+        self,
+        *,
+        title: str,
+        original_text: str,
+        sentence_results: Sequence[dict[str, Any]],
+        document_ids: Sequence[str] = (),
+        collection_ids: Sequence[str] = (),
+    ) -> str:
         audit_id = f"audit_{uuid.uuid4().hex}"
         with self.connect() as connection:
-            connection.execute("INSERT INTO audits VALUES(?,?,?,?,?,?,?)", (audit_id, title, original_text, json.dumps(sentence_results, ensure_ascii=False), json.dumps(list(document_ids)), json.dumps(list(collection_ids)), utc_now()))
+            connection.execute(
+                "INSERT INTO audits VALUES(?,?,?,?,?,?,?)",
+                (
+                    audit_id,
+                    title,
+                    original_text,
+                    json.dumps(sentence_results, ensure_ascii=False),
+                    json.dumps(list(document_ids)),
+                    json.dumps(list(collection_ids)),
+                    utc_now(),
+                ),
+            )
         return audit_id
 
-    def save_contradiction(self, *, subject: str, description: str, classification: str, evidence_side_a: Evidence, evidence_side_b: Evidence, explanation: str = "") -> str:
+    def save_contradiction(
+        self,
+        *,
+        subject: str,
+        description: str,
+        classification: str,
+        evidence_side_a: Evidence,
+        evidence_side_b: Evidence,
+        explanation: str = "",
+    ) -> str:
         contradiction_id = f"contradiction_{uuid.uuid4().hex}"
         with self.connect() as connection:
-            connection.execute("INSERT INTO contradictions VALUES(?,?,?,?,?,?,?,?,?)", (contradiction_id, subject, description, classification, evidence_side_a.model_dump_json(), evidence_side_b.model_dump_json(), explanation, "unreviewed", utc_now()))
+            connection.execute(
+                "INSERT INTO contradictions VALUES(?,?,?,?,?,?,?,?,?)",
+                (
+                    contradiction_id,
+                    subject,
+                    description,
+                    classification,
+                    evidence_side_a.model_dump_json(),
+                    evidence_side_b.model_dump_json(),
+                    explanation,
+                    "unreviewed",
+                    utc_now(),
+                ),
+            )
         return contradiction_id
+
+    def list_contradictions(self) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM contradictions ORDER BY created_at DESC"
+            ).fetchall()
+        return [
+            {
+                **dict(row),
+                "evidence_side_a": json.loads(row["evidence_side_a"]),
+                "evidence_side_b": json.loads(row["evidence_side_b"]),
+            }
+            for row in rows
+        ]
 
     def delete_document(self, document_id: str) -> list[str]:
         with self.connect() as connection:
-            rows = connection.execute("SELECT chunk_id FROM chunks WHERE document_id=?", (document_id,)).fetchall()
+            rows = connection.execute(
+                "SELECT chunk_id FROM chunks WHERE document_id=?", (document_id,)
+            ).fetchall()
             # Research records keep evidence snapshots rather than fragile live
             # foreign keys. Delete only entries that explicitly mention this
             # document, leaving unrelated topics and claims intact.
@@ -460,8 +737,12 @@ class LibraryDatabase:
                 "DELETE FROM topic_items WHERE document_id=? OR evidence_snapshot LIKE ?",
                 (document_id, marker),
             )
-            connection.execute("DELETE FROM claim_evidence WHERE evidence_snapshot LIKE ?", (marker,))
-            connection.execute("DELETE FROM comparisons WHERE selected_document_ids LIKE ?", (marker,))
+            connection.execute(
+                "DELETE FROM claim_evidence WHERE evidence_snapshot LIKE ?", (marker,)
+            )
+            connection.execute(
+                "DELETE FROM comparisons WHERE selected_document_ids LIKE ?", (marker,)
+            )
             connection.execute("DELETE FROM audits WHERE selected_document_ids LIKE ?", (marker,))
             connection.execute(
                 "DELETE FROM contradictions WHERE evidence_side_a LIKE ? OR evidence_side_b LIKE ?",

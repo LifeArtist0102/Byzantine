@@ -14,7 +14,7 @@ from byzantine.models.document import BibliographicMetadata, DocumentRecord
 from byzantine.paths import ensure_app_data_dir
 from byzantine.storage.database import LibraryDatabase
 
-SUPPORTED_SUFFIXES = {".pdf", ".txt", ".md", ".markdown", ".jpg", ".jpeg", ".png"}
+SUPPORTED_SUFFIXES = {".pdf", ".docx", ".txt", ".md", ".markdown", ".jpg", ".jpeg", ".png"}
 ProgressCallback = Callable[[str, float], None]
 
 
@@ -129,8 +129,79 @@ def _extract_pdf(path: Path, document_id: str) -> tuple[list[dict[str, Any]], in
 
 def _extract_text(path: Path, document_id: str) -> tuple[list[dict[str, Any]], int | None]:
     text = path.read_text(encoding="utf-8", errors="replace")
-    regions = [{"region_id": "paragraph_source", "coordinate_space": "text_characters", "paragraph_index": 0, "character_start": 0, "character_end": len(text)}]
+    regions = [
+        {
+            "region_id": "paragraph_source",
+            "coordinate_space": "text_characters",
+            "paragraph_index": 0,
+            "character_start": 0,
+            "character_end": len(text),
+        }
+    ]
     return _text_chunks(text, document_id=document_id, source_regions=regions), None
+
+
+def _extract_docx(path: Path, document_id: str) -> tuple[list[dict[str, Any]], int | None]:
+    """Extract paragraphs and tables while preserving Word heading structure."""
+    try:
+        from docx import Document as WordDocument
+    except ImportError as exc:  # pragma: no cover
+        raise RuntimeError("DOCX 导入需要 python-docx，请重新安装项目依赖。") from exc
+
+    document = WordDocument(path)
+    chunks: list[dict[str, Any]] = []
+    section_path = ["Imported DOCX"]
+
+    def append_text(text: str, *, paragraph_index: int, path_parts: list[str]) -> None:
+        clean = text.strip()
+        if not clean:
+            return
+        for start in range(0, len(clean), 2600):
+            part = clean[start : start + 2600]
+            chunks.append(
+                {
+                    "chunk_id": "",
+                    "chunk_index": 0,
+                    "section_path": path_parts.copy(),
+                    "text": part,
+                    "search_text": part,
+                    "page_start": None,
+                    "page_end": None,
+                    "source_regions": [
+                        {
+                            "region_id": f"docx_paragraph_{paragraph_index}_{start}",
+                            "coordinate_space": "docx_paragraphs",
+                            "paragraph_index": paragraph_index,
+                            "character_start": start,
+                            "character_end": start + len(part),
+                        }
+                    ],
+                    "metadata": {},
+                }
+            )
+
+    for paragraph_index, paragraph in enumerate(document.paragraphs):
+        text = paragraph.text.strip()
+        style_name = paragraph.style.name if paragraph.style else ""
+        if text and style_name.lower().startswith("heading"):
+            try:
+                level = int(style_name.split()[-1])
+            except (ValueError, IndexError):
+                level = 1
+            section_path = section_path[: max(level - 1, 0)]
+            section_path.append(text)
+            continue
+        append_text(text, paragraph_index=paragraph_index, path_parts=section_path)
+
+    paragraph_offset = len(document.paragraphs)
+    for table_index, table in enumerate(document.tables):
+        rows = [" | ".join(cell.text.strip() for cell in row.cells) for row in table.rows]
+        append_text(
+            "\n".join(row for row in rows if row.strip(" |")),
+            paragraph_index=paragraph_offset + table_index,
+            path_parts=[*section_path, f"Table {table_index + 1}"],
+        )
+    return _link_chunks(chunks, document_id), None
 
 
 def _extract_image(path: Path, document_id: str) -> tuple[list[dict[str, Any]], int | None]:
@@ -143,9 +214,17 @@ def _extract_image(path: Path, document_id: str) -> tuple[list[dict[str, Any]], 
     for item in result[0] if result else []:
         polygon, (text, confidence) = item
         xs, ys = [point[0] for point in polygon], [point[1] for point in polygon]
-        region = {"region_id": f"ocr_{len(chunks):04d}", "coordinate_space": "image_pixels", "bbox": [min(xs), min(ys), max(xs), max(ys)]}
+        region = {
+            "region_id": f"ocr_{len(chunks):04d}",
+            "coordinate_space": "image_pixels",
+            "bbox": [min(xs), min(ys), max(xs), max(ys)],
+        }
         chunks.extend(_text_chunks(text, document_id=document_id, source_regions=[region]))
-        chunks[-1]["metadata"] = {"ocr_raw": text, "corrected_text": text, "ocr_confidence": confidence}
+        chunks[-1]["metadata"] = {
+            "ocr_raw": text,
+            "corrected_text": text,
+            "ocr_confidence": confidence,
+        }
     return _link_chunks(chunks, document_id), 1
 
 
@@ -163,6 +242,8 @@ def _run_pipeline(
         progress("正在提取文字与原文坐标", 0.08)
     if source.suffix.lower() == ".pdf":
         chunks, page_count = _extract_pdf(source, document.document_id)
+    elif source.suffix.lower() == ".docx":
+        chunks, page_count = _extract_docx(source, document.document_id)
     elif source.suffix.lower() in {".txt", ".md", ".markdown"}:
         chunks, page_count = _extract_text(source, document.document_id)
     else:
@@ -198,12 +279,14 @@ def _run_pipeline(
             evidence,
             qdrant_path=str(root / "qdrant"),
             progress=(
-                lambda completed, total: progress(
-                    f"正在向量化 {completed}/{total} 条证据",
-                    0.42 + 0.55 * completed / max(total, 1),
+                lambda completed, total: (
+                    progress(
+                        f"正在向量化 {completed}/{total} 条证据",
+                        0.42 + 0.55 * completed / max(total, 1),
+                    )
+                    if progress
+                    else None
                 )
-                if progress
-                else None
             ),
         )
     except RuntimeError as exc:
@@ -225,7 +308,7 @@ def process_document(
 ) -> DocumentRecord:
     """Synchronously import one document with durable source provenance."""
     if source.suffix.lower() not in SUPPORTED_SUFFIXES:
-        raise ValueError("仅支持 PDF、TXT、Markdown、JPG、JPEG、PNG。")
+        raise ValueError("仅支持 PDF、DOCX、TXT、Markdown、JPG、JPEG、PNG。")
     root = ensure_app_data_dir()
     database = database or LibraryDatabase(root / "library.db")
     database.initialize()
@@ -240,7 +323,9 @@ def process_document(
         stored = destination / f"source{source.suffix.lower()}"
         shutil.copy2(source, stored)
         database.update_document(document.document_id, file_path=str(stored))
-        return reprocess_document(document.document_id, database=database, seed_path=seed_path, progress=progress)
+        return reprocess_document(
+            document.document_id, database=database, seed_path=seed_path, progress=progress
+        )
     document = database.create_document(
         collection_id=collection_id,
         metadata=metadata,
@@ -254,7 +339,14 @@ def process_document(
     shutil.copy2(source, stored)
     database.update_document(document.document_id, file_path=str(stored))
     try:
-        return _run_pipeline(source=stored, document=document, database=database, root=root, seed_path=seed_path, progress=progress)
+        return _run_pipeline(
+            source=stored,
+            document=document,
+            database=database,
+            root=root,
+            seed_path=seed_path,
+            progress=progress,
+        )
     except Exception as exc:
         database.update_document(document.document_id, status="failed", error_message=str(exc))
         raise
@@ -278,7 +370,14 @@ def reprocess_document(
         source = candidates[0]
         database.update_document(document_id, file_path=str(source))
     try:
-        return _run_pipeline(source=source, document=document, database=database, root=root, seed_path=seed_path, progress=progress)
+        return _run_pipeline(
+            source=source,
+            document=document,
+            database=database,
+            root=root,
+            seed_path=seed_path,
+            progress=progress,
+        )
     except Exception as exc:
         database.update_document(document_id, status="failed", error_message=str(exc))
         raise
