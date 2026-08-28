@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -18,8 +18,6 @@ def _model_name() -> str:
     if configured:
         return configured
     bundled = Path(__file__).resolve().parents[3] / "models" / "bge-m3"
-    # Reuse the project-local model before attempting a download into the
-    # user's C-drive Hugging Face cache.
     return str(bundled) if bundled.is_dir() else "BAAI/bge-m3"
 
 
@@ -39,8 +37,27 @@ def _load_model() -> Any:
     return model_class(_model_name(), use_fp16=device == "cuda", device=device)
 
 
-def upsert_evidence(evidence: Sequence[Evidence], *, qdrant_path: str, collection_name: str = DEFAULT_COLLECTION) -> None:
-    """Embed one document's evidence and persist it beside full provenance payloads."""
+def _payload(item: Evidence) -> dict[str, Any]:
+    return {
+        "evidence": item.model_dump(mode="json"),
+        "chunk_id": item.chunk_id,
+        "document_id": item.document_id,
+        "collection_id": item.collection_id,
+        "collection_type": item.collection_type,
+        "source_type": item.source_type,
+        "language": item.language,
+        "metadata": item.metadata,
+    }
+
+
+def upsert_evidence(
+    evidence: Sequence[Evidence],
+    *,
+    qdrant_path: str,
+    collection_name: str = DEFAULT_COLLECTION,
+    progress: Callable[[int, int], None] | None = None,
+) -> None:
+    """Embed one document's evidence in bounded batches and persist provenance."""
     if not evidence:
         return
     _, _, client_class, models = _dependencies()
@@ -49,45 +66,120 @@ def upsert_evidence(evidence: Sequence[Evidence], *, qdrant_path: str, collectio
     client = client_class(path=qdrant_path)
     try:
         for start in range(0, len(evidence), batch_size):
-            batch = evidence[start:start + batch_size]
-            output = model.encode([item.text for item in batch], batch_size=batch_size, max_length=4096, return_dense=True, return_sparse=False, return_colbert_vecs=False)
+            batch = evidence[start : start + batch_size]
+            output = model.encode(
+                [item.text for item in batch],
+                batch_size=batch_size,
+                max_length=4096,
+                return_dense=True,
+                return_sparse=False,
+                return_colbert_vecs=False,
+            )
             if not client.collection_exists(collection_name):
-                client.create_collection(collection_name, vectors_config=models.VectorParams(size=len(output["dense_vecs"][0]), distance=models.Distance.COSINE))
-                for field in ("document_id", "collection_id", "collection_type", "source_type", "language", "metadata.people", "metadata.places", "metadata.topics"):
-                    client.create_payload_index(collection_name, field, models.PayloadSchemaType.KEYWORD)
-            client.upsert(collection_name, points=[models.PointStruct(id=qdrant_id(item.chunk_id), vector=vector.tolist(), payload={"evidence": item.model_dump(mode="json"), "chunk_id": item.chunk_id, "document_id": item.document_id, "collection_id": item.collection_id, "collection_type": item.collection_type, "source_type": item.source_type, "language": item.language, "metadata": item.metadata}) for item, vector in zip(batch, output["dense_vecs"], strict=True)], wait=True)
-            print(f"已向量化 {min(start + len(batch), len(evidence))}/{len(evidence)} 条证据", flush=True)
+                client.create_collection(
+                    collection_name,
+                    vectors_config=models.VectorParams(
+                        size=len(output["dense_vecs"][0]),
+                        distance=models.Distance.COSINE,
+                    ),
+                )
+                for field in (
+                    "document_id",
+                    "collection_id",
+                    "collection_type",
+                    "source_type",
+                    "language",
+                    "metadata.people",
+                    "metadata.places",
+                    "metadata.topics",
+                ):
+                    client.create_payload_index(
+                        collection_name,
+                        field,
+                        models.PayloadSchemaType.KEYWORD,
+                    )
+            client.upsert(
+                collection_name,
+                points=[
+                    models.PointStruct(
+                        id=qdrant_id(item.chunk_id),
+                        vector=vector.tolist(),
+                        payload=_payload(item),
+                    )
+                    for item, vector in zip(batch, output["dense_vecs"], strict=True)
+                ],
+                wait=True,
+            )
+            completed = min(start + len(batch), len(evidence))
+            print(f"已向量化 {completed}/{len(evidence)} 条证据", flush=True)
+            if progress:
+                progress(completed, len(evidence))
     finally:
         client.close()
 
 
-def search_evidence(query: str, *, qdrant_path: str, document_ids: Sequence[str] = (), collection_ids: Sequence[str] = (), limit: int = 20, collection_name: str = DEFAULT_COLLECTION) -> list[Evidence]:
-    """Return vector-ranked canonical Evidence, respecting selected library/document scopes."""
+def search_evidence(
+    query: str,
+    *,
+    qdrant_path: str,
+    document_ids: Sequence[str] = (),
+    collection_ids: Sequence[str] = (),
+    limit: int = 20,
+    collection_name: str = DEFAULT_COLLECTION,
+) -> list[Evidence]:
+    """Return vector-ranked canonical Evidence in the requested scope."""
     _, _, client_class, models = _dependencies()
     model = _load_model()
-    vector = model.encode([query], batch_size=1, max_length=8192, return_dense=True, return_sparse=False, return_colbert_vecs=False)["dense_vecs"][0].tolist()
+    vector = model.encode(
+        [query],
+        batch_size=1,
+        max_length=4096,
+        return_dense=True,
+        return_sparse=False,
+        return_colbert_vecs=False,
+    )["dense_vecs"][0].tolist()
     conditions = []
     if document_ids:
-        conditions.append(models.FieldCondition(key="document_id", match=models.MatchAny(any=list(document_ids))))
+        conditions.append(
+            models.FieldCondition(key="document_id", match=models.MatchAny(any=list(document_ids)))
+        )
     if collection_ids:
-        conditions.append(models.FieldCondition(key="collection_id", match=models.MatchAny(any=list(collection_ids))))
+        conditions.append(
+            models.FieldCondition(key="collection_id", match=models.MatchAny(any=list(collection_ids)))
+        )
     client = client_class(path=qdrant_path)
     try:
         if not client.collection_exists(collection_name):
             return []
-        points = client.query_points(collection_name, query=vector, query_filter=models.Filter(must=conditions) if conditions else None, limit=limit, with_payload=True, with_vectors=False).points
+        points = client.query_points(
+            collection_name,
+            query=vector,
+            query_filter=models.Filter(must=conditions) if conditions else None,
+            limit=limit,
+            with_payload=True,
+            with_vectors=False,
+        ).points
         return [Evidence.model_validate(point.payload["evidence"]) for point in points]
     finally:
         client.close()
 
 
-def delete_evidence(chunk_ids: Sequence[str], *, qdrant_path: str, collection_name: str = DEFAULT_COLLECTION) -> None:
+def delete_evidence(
+    chunk_ids: Sequence[str],
+    *,
+    qdrant_path: str,
+    collection_name: str = DEFAULT_COLLECTION,
+) -> None:
     if not chunk_ids:
         return
     _, _, client_class, models = _dependencies()
     client = client_class(path=qdrant_path)
     try:
         if client.collection_exists(collection_name):
-            client.delete(collection_name, points_selector=models.PointIdsList(points=[qdrant_id(item) for item in chunk_ids]), wait=True)
+            client.delete(
+                collection_name,
+                points_selector=models.PointIdsList(points=[qdrant_id(item) for item in chunk_ids]),
+                wait=True,
+            )
     finally:
         client.close()

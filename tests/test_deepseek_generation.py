@@ -5,6 +5,7 @@ from byzantine.generation.deepseek import (
     build_user_prompt,
     generate_grounded_answer,
     make_sources,
+    summarize_research_chat,
     validate_citations,
 )
 
@@ -64,3 +65,27 @@ def test_generation_uses_fake_client_and_returns_sources() -> None:
     assert result["answer"].endswith("[S1]")
     assert result["sources"][0]["label"] == "S1"
     assert completions.kwargs["model"] == "deepseek-v4-flash"
+
+
+def test_research_summary_is_cited_and_structured() -> None:
+    class FakeCompletions:
+        def create(self, **kwargs):
+            self.kwargs = kwargs
+            content = '{"title":"Basil II","tags":["rulership"],"summary":"Basil II held real power after 976. [S1]"}'
+            message = type("Message", (), {"content": content})()
+            return type("Response", (), {"choices": [type("Choice", (), {"message": message})()]})()
+
+    completions = FakeCompletions()
+    client = type("Client", (), {"chat": type("Chat", (), {"completions": completions})()})()
+    summary = summarize_research_chat(
+        [{"role": "user", "content": "Who held power?"}],
+        evidence(),
+        api_key=None,
+        base_url="https://api.deepseek.com",
+        model="deepseek-chat",
+        max_evidence_characters=200,
+        client=client,
+    )
+
+    assert summary["tags"] == ["rulership"]
+    assert "[S1]" in summary["summary"]

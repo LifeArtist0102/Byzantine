@@ -19,6 +19,9 @@ def utc_now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+_UNSET = object()
+
+
 class LibraryDatabase:
     """SQLite-backed state. All create operations are safe on repeated startup."""
 
@@ -90,6 +93,21 @@ class LibraryDatabase:
                 contradiction_id TEXT PRIMARY KEY, subject TEXT NOT NULL, description TEXT NOT NULL,
                 classification TEXT NOT NULL, evidence_side_a TEXT NOT NULL, evidence_side_b TEXT NOT NULL,
                 agent_explanation TEXT, review_status TEXT NOT NULL, created_at TEXT NOT NULL)""",
+            """CREATE TABLE IF NOT EXISTS conversations (
+                conversation_id TEXT PRIMARY KEY, title TEXT NOT NULL, topic_id TEXT REFERENCES research_topics(topic_id) ON DELETE SET NULL,
+                collection_ids TEXT NOT NULL DEFAULT '[]', document_ids TEXT NOT NULL DEFAULT '[]',
+                created_at TEXT NOT NULL, updated_at TEXT NOT NULL)""",
+            """CREATE TABLE IF NOT EXISTS chat_messages (
+                message_id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES conversations(conversation_id) ON DELETE CASCADE,
+                role TEXT NOT NULL CHECK(role IN ('user','assistant')), content TEXT NOT NULL,
+                evidence_snapshot TEXT NOT NULL DEFAULT '[]', labels TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL)""",
+            "CREATE INDEX IF NOT EXISTS idx_chat_messages_conversation ON chat_messages(conversation_id, created_at)",
+            """CREATE TABLE IF NOT EXISTS topic_chat_summaries (
+                summary_id TEXT PRIMARY KEY, topic_id TEXT NOT NULL REFERENCES research_topics(topic_id) ON DELETE CASCADE,
+                conversation_id TEXT NOT NULL REFERENCES conversations(conversation_id) ON DELETE CASCADE,
+                title TEXT NOT NULL, tags TEXT NOT NULL DEFAULT '[]', summary TEXT NOT NULL,
+                evidence_snapshot TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                UNIQUE(topic_id, conversation_id))""",
         ]
         with self.connect() as connection:
             for statement in statements:
@@ -224,6 +242,147 @@ class LibraryDatabase:
         with self.connect() as connection:
             return [dict(row) for row in connection.execute("SELECT * FROM research_topics ORDER BY updated_at DESC")]
 
+    def get_topic(self, topic_id: str) -> dict[str, Any]:
+        with self.connect() as connection:
+            row = connection.execute("SELECT * FROM research_topics WHERE topic_id=?", (topic_id,)).fetchone()
+        if not row:
+            raise KeyError(f"研究专题不存在：{topic_id}")
+        return dict(row)
+
+    def create_conversation(
+        self,
+        *,
+        title: str,
+        collection_ids: Sequence[str],
+        document_ids: Sequence[str],
+        topic_id: str | None = None,
+    ) -> str:
+        conversation_id, now = f"chat_{uuid.uuid4().hex}", utc_now()
+        with self.connect() as connection:
+            connection.execute(
+                "INSERT INTO conversations VALUES(?,?,?,?,?,?,?)",
+                (conversation_id, title, topic_id, json.dumps(list(collection_ids)), json.dumps(list(document_ids)), now, now),
+            )
+        return conversation_id
+
+    def list_conversations(self) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT c.*, COUNT(m.message_id) AS message_count
+                   FROM conversations c LEFT JOIN chat_messages m ON m.conversation_id=c.conversation_id
+                   GROUP BY c.conversation_id ORDER BY c.updated_at DESC"""
+            ).fetchall()
+        return [
+            {
+                **dict(row),
+                "collection_ids": json.loads(row["collection_ids"]),
+                "document_ids": json.loads(row["document_ids"]),
+            }
+            for row in rows
+        ]
+
+    def get_conversation(self, conversation_id: str) -> dict[str, Any]:
+        with self.connect() as connection:
+            row = connection.execute("SELECT * FROM conversations WHERE conversation_id=?", (conversation_id,)).fetchone()
+        if not row:
+            raise KeyError(f"聊天不存在：{conversation_id}")
+        return {**dict(row), "collection_ids": json.loads(row["collection_ids"]), "document_ids": json.loads(row["document_ids"])}
+
+    def update_conversation(
+        self,
+        conversation_id: str,
+        *,
+        title: str | None = None,
+        topic_id: str | None | object = _UNSET,
+        collection_ids: Sequence[str] | None = None,
+        document_ids: Sequence[str] | None = None,
+    ) -> None:
+        changes: dict[str, Any] = {"updated_at": utc_now()}
+        if title is not None:
+            changes["title"] = title
+        if topic_id is not _UNSET:
+            changes["topic_id"] = topic_id
+        if collection_ids is not None:
+            changes["collection_ids"] = json.dumps(list(collection_ids))
+        if document_ids is not None:
+            changes["document_ids"] = json.dumps(list(document_ids))
+        columns = ", ".join(f"{key}=?" for key in changes)
+        with self.connect() as connection:
+            connection.execute(f"UPDATE conversations SET {columns} WHERE conversation_id=?", [*changes.values(), conversation_id])
+
+    def add_chat_message(
+        self,
+        conversation_id: str,
+        *,
+        role: str,
+        content: str,
+        evidence: Sequence[Evidence] = (),
+        labels: Sequence[str] = (),
+    ) -> str:
+        if role not in {"user", "assistant"}:
+            raise ValueError("聊天角色必须是 user 或 assistant")
+        message_id, now = f"message_{uuid.uuid4().hex}", utc_now()
+        snapshot = [item.model_dump(mode="json") for item in evidence]
+        with self.connect() as connection:
+            connection.execute(
+                "INSERT INTO chat_messages VALUES(?,?,?,?,?,?,?)",
+                (message_id, conversation_id, role, content, json.dumps(snapshot, ensure_ascii=False), json.dumps(list(labels), ensure_ascii=False), now),
+            )
+            connection.execute("UPDATE conversations SET updated_at=? WHERE conversation_id=?", (now, conversation_id))
+        return message_id
+
+    def conversation_messages(self, conversation_id: str) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM chat_messages WHERE conversation_id=? ORDER BY created_at",
+                (conversation_id,),
+            ).fetchall()
+        return [
+            {
+                **dict(row),
+                "evidence_snapshot": json.loads(row["evidence_snapshot"]),
+                "labels": json.loads(row["labels"]),
+            }
+            for row in rows
+        ]
+
+    def save_topic_chat_summary(
+        self,
+        *,
+        topic_id: str,
+        conversation_id: str,
+        title: str,
+        tags: Sequence[str],
+        summary: str,
+        evidence: Sequence[Evidence],
+    ) -> str:
+        summary_id, now = f"topic_chat_{uuid.uuid4().hex}", utc_now()
+        snapshot = [item.model_dump(mode="json") for item in evidence]
+        with self.connect() as connection:
+            connection.execute(
+                """INSERT INTO topic_chat_summaries VALUES(?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(topic_id,conversation_id) DO UPDATE SET title=excluded.title,tags=excluded.tags,
+                   summary=excluded.summary,evidence_snapshot=excluded.evidence_snapshot,updated_at=excluded.updated_at""",
+                (summary_id, topic_id, conversation_id, title, json.dumps(list(tags), ensure_ascii=False), summary, json.dumps(snapshot, ensure_ascii=False), now, now),
+            )
+            connection.execute("UPDATE conversations SET topic_id=?, updated_at=? WHERE conversation_id=?", (topic_id, now, conversation_id))
+        return summary_id
+
+    def topic_chat_summaries(self, topic_id: str) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM topic_chat_summaries WHERE topic_id=? ORDER BY updated_at DESC",
+                (topic_id,),
+            ).fetchall()
+        return [
+            {
+                **dict(row),
+                "tags": json.loads(row["tags"]),
+                "evidence_snapshot": json.loads(row["evidence_snapshot"]),
+            }
+            for row in rows
+        ]
+
     def add_topic_item(self, topic_id: str, item_type: str, *, question: str | None = None, answer: str | None = None, evidence: Sequence[Evidence] = (), note: str | None = None) -> str:
         item_id = f"item_{uuid.uuid4().hex}"
         snapshot = [item.model_dump(mode="json") for item in evidence]
@@ -258,6 +417,19 @@ class LibraryDatabase:
             connection.execute("INSERT OR REPLACE INTO comparisons VALUES(?,?,?,?,?,?,?)", (comparison_id, comparison["question"], json.dumps(comparison["selected_document_ids"]), json.dumps(comparison["dimensions"], ensure_ascii=False), json.dumps(comparison["comparison_cells"], ensure_ascii=False), comparison.get("summary"), comparison.get("created_at") or utc_now()))
         return comparison_id
 
+    def list_comparisons(self) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute("SELECT * FROM comparisons ORDER BY created_at DESC").fetchall()
+        return [
+            {
+                **dict(row),
+                "selected_document_ids": json.loads(row["selected_document_ids"]),
+                "dimensions": json.loads(row["dimensions"]),
+                "comparison_cells": json.loads(row["comparison_cells"]),
+            }
+            for row in rows
+        ]
+
     def save_audit(self, *, title: str, original_text: str, sentence_results: Sequence[dict[str, Any]], document_ids: Sequence[str] = (), collection_ids: Sequence[str] = ()) -> str:
         audit_id = f"audit_{uuid.uuid4().hex}"
         with self.connect() as connection:
@@ -277,6 +449,13 @@ class LibraryDatabase:
             # foreign keys. Delete only entries that explicitly mention this
             # document, leaving unrelated topics and claims intact.
             marker = f"%{document_id}%"
+            # A chat is a scoped research record as well.  When one of its
+            # selected books disappears, remove the complete conversation so
+            # that an old answer cannot keep pointing at deleted evidence.
+            connection.execute(
+                "DELETE FROM conversations WHERE document_ids LIKE ?",
+                (marker,),
+            )
             connection.execute(
                 "DELETE FROM topic_items WHERE document_id=? OR evidence_snapshot LIKE ?",
                 (document_id, marker),

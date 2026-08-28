@@ -166,6 +166,22 @@ def test_delete_document_removes_vectors_records_and_stored_copy(tmp_path, monke
     evidence = database.document_evidence(document.document_id)[0]
     topic = database.create_topic("Test topic")
     database.add_topic_item(topic, "answer", evidence=[evidence])
+    conversation = database.create_conversation(
+        title="Alexios chat",
+        collection_ids=["personal"],
+        document_ids=[document.document_id],
+        topic_id=topic,
+    )
+    database.add_chat_message(conversation, role="user", content="What did Alexios do?")
+    database.add_chat_message(conversation, role="assistant", content="He prepared the army.", evidence=[evidence])
+    database.save_topic_chat_summary(
+        topic_id=topic,
+        conversation_id=conversation,
+        title="Military preparation",
+        tags=["Alexios", "warfare"],
+        summary="Alexios prepared the army at Constantinople [E1].",
+        evidence=[evidence],
+    )
     claim = database.create_claim("Test claim")
     database.link_claim_evidence(claim, evidence, "support")
 
@@ -178,3 +194,43 @@ def test_delete_document_removes_vectors_records_and_stored_copy(tmp_path, monke
     with database.connect() as connection:
         assert connection.execute("SELECT count(*) FROM topic_items").fetchone()[0] == 0
         assert connection.execute("SELECT count(*) FROM claim_evidence").fetchone()[0] == 0
+        assert connection.execute("SELECT count(*) FROM conversations").fetchone()[0] == 0
+        assert connection.execute("SELECT count(*) FROM chat_messages").fetchone()[0] == 0
+        assert connection.execute("SELECT count(*) FROM topic_chat_summaries").fetchone()[0] == 0
+
+
+def test_topic_chat_summary_preserves_conversation_and_evidence(tmp_path):
+    database = LibraryDatabase(tmp_path / "library.db")
+    database.initialize()
+    document = _document(database)
+    database.save_chunks(document.document_id, [_chunk(document.document_id)])
+    evidence = database.document_evidence(document.document_id)[0]
+    topic = database.create_topic("Military districts")
+    conversation = database.create_conversation(
+        title="Themes question",
+        collection_ids=["personal"],
+        document_ids=[document.document_id],
+    )
+    database.add_chat_message(conversation, role="user", content="How did the themes change?")
+    database.add_chat_message(
+        conversation,
+        role="assistant",
+        content="The evidence describes military preparation.",
+        evidence=[evidence],
+        labels=["warfare"],
+    )
+    database.save_topic_chat_summary(
+        topic_id=topic,
+        conversation_id=conversation,
+        title="Evolution of the themes",
+        tags=["themes", "warfare"],
+        summary="The conversation discusses the military system [E1].",
+        evidence=[evidence],
+    )
+
+    saved = database.topic_chat_summaries(topic)
+    assert saved[0]["title"] == "Evolution of the themes"
+    assert saved[0]["tags"] == ["themes", "warfare"]
+    assert saved[0]["evidence_snapshot"][0]["document_id"] == document.document_id
+    assert database.get_conversation(conversation)["topic_id"] == topic
+    assert len(database.conversation_messages(conversation)) == 2
