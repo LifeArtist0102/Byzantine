@@ -273,6 +273,61 @@ def _chat_welcome(st: Any) -> None:
     )
 
 
+def _inject_apple_minimal_layout(st: Any) -> None:
+    """Final light product layer: generous whitespace, soft surfaces, one blue action color."""
+    st.markdown(
+        """<style>
+        :root { --apple-canvas: #fbfbfd; --apple-panel: #ffffff; --apple-soft: #f5f5f7; --apple-ink: #1d1d1f; --apple-muted: #6e6e73; --apple-line: #e8e8ed; --apple-blue: #1671c9; --apple-blue-dark: #075da9; --apple-blue-soft: #e9f3fc; }
+        .stApp, [data-testid="stAppViewContainer"] { background: var(--apple-canvas) !important; color: var(--apple-ink) !important; }
+        [data-testid="stAppViewContainer"] > .main { background: var(--apple-canvas) !important; margin: 0 !important; min-height: 100dvh; border-radius: 0 !important; box-shadow: none !important; }
+        [data-testid="stMainBlockContainer"] { max-width: 1240px; padding: 2rem 3.4rem 3.5rem; }
+        [data-testid="stSidebar"] { background: rgba(251, 251, 253, .94) !important; margin: 0 !important; min-height: 100dvh; border-radius: 0 !important; box-shadow: none !important; border-right: 1px solid var(--apple-line) !important; }
+        [data-testid="stSidebar"] * { color: var(--apple-ink) !important; }
+        [data-testid="stSidebar"] [data-testid="stCaptionContainer"] p, [data-testid="stSidebar"] .sidebar-session-meta { color: var(--apple-muted) !important; }
+        [data-testid="stSidebar"] hr { border-color: var(--apple-line) !important; }
+        [data-testid="stSidebar"] [data-testid="stRadio"] label { border-radius: 9px; padding: .42rem .56rem; margin: .08rem 0; }
+        [data-testid="stSidebar"] [data-testid="stRadio"] label:hover { background: var(--apple-soft) !important; transform: none; }
+        [data-testid="stSidebar"] [data-testid="stRadio"] label:has(input:checked) { background: var(--apple-blue-soft) !important; box-shadow: inset 2px 0 0 var(--apple-blue) !important; }
+        .brand-lockup { padding: .45rem .1rem .72rem; }
+        .brand-mark { width: 29px; height: 29px; border-radius: 50%; background: var(--apple-ink) !important; color: #fff !important; font-size: .82rem; }
+        .brand-name { color: var(--apple-ink) !important; font-size: .84rem; letter-spacing: .09em; }
+        .brand-subtitle { color: var(--apple-muted) !important; font-size: .62rem; letter-spacing: .055em; }
+        .page-head { border-color: var(--apple-line) !important; padding: .25rem 0 1rem; margin-bottom: 1.3rem; }
+        .page-head h1 { color: var(--apple-ink) !important; font-size: clamp(1.55rem, 2.6vw, 2.45rem); font-weight: 700; letter-spacing: -.052em; }
+        .page-head p, .page-meta { color: var(--apple-muted) !important; }
+        .page-kicker, .section-kicker, .scope-step { color: var(--apple-blue) !important; font-size: .65rem; }
+        .workflow-note { background: var(--apple-blue-soft); border-left-color: var(--apple-blue); color: #3c5f7f; border-radius: 0 8px 8px 0; }
+        .scope-shell, [data-testid="stExpander"] { border-color: var(--apple-line) !important; background: var(--apple-panel) !important; border-radius: 12px !important; box-shadow: none !important; }
+        .metric-strip, .metric-unit, .rail, .record, .record:last-child { border-color: var(--apple-line) !important; }
+        .metric-number, .record-title, .rail-title, .scope-title, .empty-title { color: var(--apple-ink) !important; }
+        .metric-label, .record-meta, .rail-copy, .scope-caption, .empty-copy, .source-line { color: var(--apple-muted) !important; }
+        .tag { background: var(--apple-blue-soft); border-color: #d5e8f8; color: #1461a6; }
+        .record:hover { background: transparent; }
+        [data-testid="stChatMessage"] { border-color: var(--apple-line) !important; }
+        [data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] p { color: var(--apple-ink) !important; }
+        [data-testid="stChatMessageAvatarUser"] { background: #e9f3fc !important; color: #1461a6 !important; }
+        [data-testid="stChatMessageAvatarAssistant"] { background: var(--apple-ink) !important; color: #fff !important; }
+        .chat-welcome { min-height: 290px; }
+        .welcome-orb { width: 44px; height: 44px; background: radial-gradient(circle at 30% 24%, #b7d9ff 0, #5d9cf0 34%, #1671c9 76%); box-shadow: inset 0 1px 2px rgba(255,255,255,.62), 0 8px 18px rgba(22,113,201,.16); }
+        .welcome-kicker { color: var(--apple-blue) !important; }
+        .welcome-title { color: var(--apple-ink) !important; font-size: clamp(1.7rem, 3vw, 2.35rem); }
+        .welcome-copy { color: var(--apple-muted) !important; }
+        .prompt-hint { background: var(--apple-panel); border-color: var(--apple-line); color: #515154; box-shadow: 0 2px 7px rgba(0,0,0,.025); }
+        [data-testid="stChatInput"] { border-color: var(--apple-line) !important; background: var(--apple-panel) !important; border-radius: 18px !important; box-shadow: 0 12px 28px rgba(0,0,0,.065) !important; }
+        [data-testid="stChatInput"]:focus-within { border-color: var(--apple-blue) !important; box-shadow: 0 0 0 4px rgba(22,113,201,.10) !important; }
+        [data-testid="stButton"] > button, [data-testid="stFormSubmitButton"] > button { background: var(--apple-blue) !important; border-color: var(--apple-blue) !important; color: #fff !important; box-shadow: none !important; }
+        [data-testid="stButton"] > button:hover, [data-testid="stFormSubmitButton"] > button:hover { background: var(--apple-blue-dark) !important; transform: translateY(-1px); box-shadow: 0 5px 14px rgba(22,113,201,.16) !important; }
+        [data-testid="stButton"] > button[kind="secondary"] { background: var(--apple-panel) !important; border-color: var(--apple-line) !important; color: var(--apple-blue) !important; }
+        [data-testid="stTextInput"] input, [data-testid="stTextArea"] textarea, [data-testid="stNumberInput"] input, [data-baseweb="select"] > div { border-color: var(--apple-line) !important; background: var(--apple-panel) !important; color: var(--apple-ink) !important; }
+        [data-testid="stTextInput"] input:focus, [data-testid="stTextArea"] textarea:focus { border-color: var(--apple-blue) !important; box-shadow: 0 0 0 3px rgba(22,113,201,.10) !important; }
+        [data-testid="stProgress"] > div > div { background: #e9f3fc !important; }
+        [data-testid="stProgress"] > div > div > div { background: var(--apple-blue) !important; }
+        @media (max-width: 860px) { [data-testid="stMainBlockContainer"] { padding: 1.2rem 1rem 2.5rem; } .chat-welcome { min-height: 225px; } }
+        </style>""",
+        unsafe_allow_html=True,
+    )
+
+
 def _page_head(st: Any, eyebrow: str, title: str, description: str, meta: str) -> None:
     st.markdown(
         f"""<section class="page-head"><div><div class="page-kicker">{eyebrow}</div>
@@ -1048,6 +1103,7 @@ def render() -> None:
     st.session_state._entry_motion_seen = True
     _inject_style(st)
     _inject_reference_layout(st, play_entrance=play_entrance)
+    _inject_apple_minimal_layout(st)
     database = _database()
     st.sidebar.markdown(
         '<div class="brand-lockup"><div class="brand-mark">B</div><div class="brand-name">BYZANTINE</div>'
