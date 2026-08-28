@@ -192,6 +192,87 @@ def _inject_style(st: Any) -> None:
     )
 
 
+def _inject_reference_layout(st: Any, *, play_entrance: bool) -> None:
+    """Apply the framed, calm chat-workspace direction from the visual brief."""
+    entrance = ""
+    if play_entrance:
+        entrance = """
+        @media (prefers-reduced-motion: no-preference) {
+            [data-testid="stSidebar"] { animation: sidebar-enter .55s cubic-bezier(.16, 1, .3, 1) both; }
+            [data-testid="stAppViewContainer"] > .main { animation: workspace-enter .7s .08s cubic-bezier(.16, 1, .3, 1) both; }
+        }
+        @keyframes sidebar-enter { from { opacity: 0; transform: translateX(-18px); } to { opacity: 1; transform: translateX(0); } }
+        @keyframes workspace-enter { from { opacity: 0; transform: translateY(16px) scale(.992); } to { opacity: 1; transform: translateY(0) scale(1); } }
+        """
+    st.markdown(
+        f"""<style>
+        :root {{ --canvas: #151716; --window: #fbfbf9; --panel: #ffffff; --soft: #f5f6f3; --ink: #142019; --muted: #728078; --line: #e5e8e3; --forest: #116149; --forest-dark: #0b4031; --forest-soft: #e4f0e8; }}
+        .stApp, [data-testid="stAppViewContainer"] {{ background: var(--canvas) !important; }}
+        [data-testid="stAppViewContainer"] > .main {{
+            background: var(--window) !important; margin: 28px 28px 28px 0; min-height: calc(100vh - 56px);
+            border-radius: 0 24px 24px 0; box-shadow: 18px 22px 56px rgba(0, 0, 0, .18); overflow: hidden;
+        }}
+        [data-testid="stMainBlockContainer"] {{ max-width: 1280px; padding: 1.65rem 2.65rem 3rem; }}
+        [data-testid="stSidebar"] {{
+            background: var(--window) !important; color: var(--ink) !important; margin: 28px 0 28px 28px;
+            min-height: calc(100vh - 56px); border-radius: 24px 0 0 24px; border: 0; border-right: 1px solid var(--line);
+            box-shadow: -10px 22px 56px rgba(0, 0, 0, .08); overflow: hidden;
+        }}
+        [data-testid="stSidebar"] * {{ color: var(--ink) !important; }}
+        [data-testid="stSidebar"] [data-testid="stCaptionContainer"] p, [data-testid="stSidebar"] .sidebar-session-meta {{ color: var(--muted) !important; }}
+        [data-testid="stSidebar"] hr {{ border-color: var(--line); }}
+        [data-testid="stSidebar"] [data-testid="stRadio"] label {{ border-radius: 8px; padding: .4rem .52rem; margin: .08rem 0; }}
+        [data-testid="stSidebar"] [data-testid="stRadio"] label:hover {{ background: #f0f4f1; transform: translateX(2px); }}
+        [data-testid="stSidebar"] [data-testid="stRadio"] label:has(input:checked) {{ background: var(--forest-soft); box-shadow: inset 2px 0 0 var(--forest); }}
+        .brand-lockup {{ padding: .55rem .1rem .8rem; }}
+        .brand-mark {{ background: #18271f; border: 0; border-radius: 9px; color: #fff !important; width: 30px; height: 30px; margin-bottom: .58rem; }}
+        .brand-name {{ color: var(--ink) !important; font-size: .87rem; letter-spacing: .105em; }}
+        .brand-subtitle {{ color: var(--muted) !important; font-size: .64rem; }}
+        .page-head {{ margin-bottom: 1.1rem; padding: .15rem 0 .95rem; border-color: var(--line); }}
+        .page-head h1 {{ font-size: clamp(1.45rem, 2.35vw, 2.25rem); font-weight: 720; }}
+        .page-head p {{ font-size: .87rem; line-height: 1.55; }}
+        .page-kicker, .section-kicker {{ font-size: .65rem; letter-spacing: .14em; }}
+        .page-meta {{ font-size: .66rem; color: #849087; }}
+        .scope-shell {{ border-color: var(--line); border-radius: 12px; box-shadow: none; background: var(--panel); padding: 1rem 1.1rem; }}
+        .metric-strip {{ margin-bottom: 1rem; border-color: var(--line); }}
+        .metric-unit {{ min-width: 92px; padding: .6rem 1rem .6rem 0; margin-right: 1rem; border-color: var(--line); }}
+        .metric-number {{ font-size: 1.1rem; }}
+        .rail {{ border-color: var(--line); }}
+        .chat-welcome {{ min-height: 245px; display: flex; align-items: center; justify-content: center; text-align: center; padding: 1.2rem 0 .2rem; }}
+        .chat-welcome-inner {{ max-width: 550px; }}
+        .welcome-orb {{ width: 40px; height: 40px; margin: 0 auto 1rem; border-radius: 50%; background: radial-gradient(circle at 30% 25%, #b7dbc5 0, #3f9472 35%, #0c5b43 76%); box-shadow: inset 0 1px 2px rgba(255,255,255,.55); }}
+        .welcome-kicker {{ color: var(--forest); font-family: Consolas, "Cascadia Mono", monospace; font-size: .68rem; letter-spacing: .12em; }}
+        .welcome-title {{ color: var(--ink); font-size: 1.8rem; letter-spacing: -.055em; font-weight: 730; margin: .6rem 0 .45rem; }}
+        .welcome-copy {{ color: var(--muted); font-size: .88rem; line-height: 1.62; }}
+        .prompt-hints {{ display: flex; justify-content: center; flex-wrap: wrap; gap: .45rem; margin-top: 1rem; }}
+        .prompt-hint {{ background: var(--panel); border: 1px solid var(--line); border-radius: 999px; color: #526158; padding: .34rem .62rem; font-size: .72rem; }}
+        [data-testid="stChatInput"] {{ max-width: 760px; margin: .55rem auto 0; border-radius: 14px; background: var(--panel); box-shadow: 0 13px 32px rgba(24, 39, 31, .09); }}
+        [data-testid="stChatInput"] textarea {{ min-height: 48px; }}
+        [data-testid="stButton"] > button, [data-testid="stFormSubmitButton"] > button {{ border-radius: 999px; font-size: .82rem; padding: .38rem .85rem; }}
+        .sidebar-session-heading {{ color: var(--ink); font-size: .72rem; font-weight: 720; letter-spacing: .1em; margin: .65rem 0 .35rem; }}
+        .sidebar-session-note {{ color: var(--muted); font-size: .72rem; line-height: 1.5; margin-top: .55rem; }}
+        {entrance}
+        @media (max-width: 860px) {{
+            [data-testid="stAppViewContainer"] > .main {{ margin: 0; min-height: 100dvh; border-radius: 0; box-shadow: none; }}
+            [data-testid="stSidebar"] {{ margin: 0; min-height: 100dvh; border-radius: 0; box-shadow: none; }}
+            [data-testid="stMainBlockContainer"] {{ padding: 1.15rem 1rem 2.5rem; }}
+            .chat-welcome {{ min-height: 190px; }} .welcome-title {{ font-size: 1.45rem; }}
+        }}
+        </style>""",
+        unsafe_allow_html=True,
+    )
+
+
+def _chat_welcome(st: Any) -> None:
+    st.markdown(
+        """<section class="chat-welcome"><div class="chat-welcome-inner"><div class="welcome-orb"></div>
+        <div class="welcome-kicker">BYZANTINE RESEARCH AGENT</div><div class="welcome-title">从史料中开始提问</div>
+        <div class="welcome-copy">选择资料范围后，提出一个明确的问题。回答会保存为可追溯的研究对话，并附带对应出处。</div>
+        <div class="prompt-hints"><span class="prompt-hint">人物与年代</span><span class="prompt-hint">因果链条</span><span class="prompt-hint">制度演变</span></div></div></section>""",
+        unsafe_allow_html=True,
+    )
+
+
 def _page_head(st: Any, eyebrow: str, title: str, description: str, meta: str) -> None:
     st.markdown(
         f"""<section class="page-head"><div><div class="page-kicker">{eyebrow}</div>
@@ -371,8 +452,7 @@ def _agent_page(st: Any, database: LibraryDatabase) -> None:
     if "active_conversation" not in st.session_state:
         st.session_state.active_conversation = None
 
-    main, rail = st.columns([3.6, 1.15], gap="large")
-    with rail:
+    with st.sidebar:
         st.markdown(
             '<aside class="rail"><div class="rail-title">对话工作台</div>', unsafe_allow_html=True
         )
@@ -425,7 +505,7 @@ def _agent_page(st: Any, database: LibraryDatabase) -> None:
             unsafe_allow_html=True,
         )
 
-    with main:
+    with st.container():
         default_collections = active_data["collection_ids"] if active_data else None
         default_documents = active_data["document_ids"] if active_data else None
         collection_ids, document_ids = _scope_picker(
@@ -443,12 +523,7 @@ def _agent_page(st: Any, database: LibraryDatabase) -> None:
             database.conversation_messages(active_data["conversation_id"]) if active_data else []
         )
         if not messages:
-            _empty_state(
-                st,
-                "FIRST QUESTION",
-                "从一个可核查的问题开始",
-                "选择至少一本具体文献，再提问。系统会保存这段对话，并在每次回答中展示实际使用的原文证据。",
-            )
+            _chat_welcome(st)
         for message in messages:
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
@@ -969,7 +1044,10 @@ def render() -> None:
     import streamlit as st
 
     st.set_page_config(page_title="Byzantine Research Studio", page_icon="B", layout="wide")
+    play_entrance = not st.session_state.get("_entry_motion_seen", False)
+    st.session_state._entry_motion_seen = True
     _inject_style(st)
+    _inject_reference_layout(st, play_entrance=play_entrance)
     database = _database()
     st.sidebar.markdown(
         '<div class="brand-lockup"><div class="brand-mark">B</div><div class="brand-name">BYZANTINE</div>'
