@@ -80,6 +80,10 @@ def _inject_design_system(st: Any, *, first_visit: bool) -> None:
         .sidebar-section {{ color:#7b8494; font-size:.7rem; letter-spacing:.04em; margin:1rem 0 .35rem; }}
         .app-topbar {{ min-height:48px; border-bottom:1px solid var(--line); margin-bottom:1.35rem; }}
         .trace-badge {{ display:inline-flex; align-items:center; gap:.42rem; padding:.52rem .78rem; border:1px solid var(--line); border-radius:999px; background:rgba(255,255,255,.78); color:#202834; font-size:.77rem; }}
+        .st-key-research_topbar [data-testid="stHorizontalBlock"] {{ align-items:flex-start; }}
+        .st-key-research_topbar .app-topbar {{ min-height:14px; margin-bottom:1rem; }}
+        .st-key-research_topbar [data-testid="stSelectbox"] {{ max-width:210px; }}
+        .st-key-research_topbar [data-baseweb="select"]>div {{ min-height:46px; background:rgba(255,255,255,.68)!important; border-color:rgba(188,196,208,.72)!important; box-shadow:inset 0 1px 0 rgba(255,255,255,.9),0 9px 24px rgba(39,52,73,.045); backdrop-filter:blur(18px) saturate(1.18); }}
         .page-intro {{ margin:0 0 1.25rem; }}
         .page-intro h1 {{ margin:0; color:var(--ink); font-size:1.72rem; line-height:1.2; letter-spacing:-.035em; }}
         .page-intro p {{ margin:.42rem 0 0; color:var(--muted); font-size:.88rem; line-height:1.6; max-width:70ch; }}
@@ -87,13 +91,20 @@ def _inject_design_system(st: Any, *, first_visit: bool) -> None:
         .scope-name {{ color:#2c3440; font-size:.8rem; font-weight:650; }}
         .scope-chip {{ color:#333b47; font-size:.72rem; background:#f1f2f4; border-radius:7px; padding:.28rem .55rem; }}
         .scope-count {{ color:var(--muted); font-size:.75rem; }}
-        .hero-welcome {{ min-height:390px; display:flex; align-items:center; justify-content:center; text-align:center; }}
-        .hero-inner {{ width:min(670px,100%); }}
+        .agent-mode-marker {{ display:none; }}
+        [data-testid="stAppViewContainer"]:has(.agent-mode-marker)>.main {{ background:radial-gradient(circle at 52% 12%,rgba(221,232,249,.38),transparent 34%),linear-gradient(180deg,#fafbfd 0%,#f6f7f9 100%); }}
+        [data-testid="stMainBlockContainer"]:has(.agent-mode-marker) {{ max-width:1040px; padding:1rem 2rem 2rem; }}
+        .hero-welcome {{ min-height:clamp(245px,36vh,330px); display:flex; align-items:center; justify-content:center; text-align:center; }}
+        .hero-inner {{ width:min(620px,100%); }}
         .hero-orb {{ width:54px; height:54px; margin:0 auto 1.2rem; border-radius:50%; background:radial-gradient(circle at 30% 24%,#e3efff 0,#7bb0ff 34%,#0b68e8 74%); box-shadow:inset 0 2px 3px rgba(255,255,255,.72),0 12px 30px rgba(20,107,230,.20); }}
         .hero-title {{ color:#101a31; font-size:2.35rem; font-weight:750; letter-spacing:-.055em; }}
         .hero-copy {{ color:var(--muted); font-size:.92rem; margin:.55rem auto 0; }}
         .prompt-chips {{ display:flex; justify-content:center; flex-wrap:wrap; gap:.5rem; margin-top:1.25rem; }}
-        .prompt-chip {{ border:1px solid var(--line); border-radius:999px; background:rgba(255,255,255,.8); color:#3b4350; padding:.42rem .9rem; font-size:.76rem; }}
+        .prompt-chip {{ border:1px solid rgba(207,213,222,.72); border-radius:999px; background:rgba(255,255,255,.52); color:#3b4350; padding:.42rem .9rem; font-size:.76rem; box-shadow:inset 0 1px 0 rgba(255,255,255,.88); backdrop-filter:blur(12px); }}
+        .st-key-agent_scope_glass {{ max-width:720px; margin:.2rem auto 1.25rem; padding:.52rem .62rem .62rem; border:1px solid rgba(255,255,255,.82); border-radius:20px; background:rgba(255,255,255,.52); box-shadow:inset 0 1px 0 rgba(255,255,255,.96),0 20px 48px rgba(35,48,70,.075); backdrop-filter:blur(24px) saturate(1.22); }}
+        .st-key-agent_scope_glass [data-testid="stHorizontalBlock"] {{ gap:.55rem; }}
+        .st-key-agent_scope_glass [data-testid="stPopover"] button {{ min-height:42px; border-color:rgba(194,202,214,.68); border-radius:13px; background:rgba(255,255,255,.58); box-shadow:inset 0 1px 0 rgba(255,255,255,.92); }}
+        .st-key-agent_scope_glass .scope-bar {{ min-height:42px; margin:0; padding:.45rem .65rem; border:0; border-radius:13px; background:rgba(239,242,246,.58); box-shadow:none; }}
         .card {{ border:1px solid var(--line); border-radius:12px; background:var(--panel); box-shadow:0 2px 8px rgba(26,38,58,.025); padding:1rem 1.15rem; }}
         .card-title {{ color:var(--ink); font-size:1rem; font-weight:720; }}
         .card-copy {{ color:var(--muted); font-size:.78rem; line-height:1.58; margin-top:.35rem; }}
@@ -126,10 +137,17 @@ def _inject_design_system(st: Any, *, first_visit: bool) -> None:
         [data-testid="stButton"]>button[kind="primary"]:hover,[data-testid="stFormSubmitButton"]>button[kind="primary"]:hover {{ background:var(--blue-dark); border-color:var(--blue-dark); }}
         [data-testid="stTextInput"] input,[data-testid="stTextArea"] textarea,[data-testid="stNumberInput"] input,[data-baseweb="select"]>div {{ background:var(--panel)!important; border-color:var(--line-strong)!important; color:var(--ink)!important; border-radius:9px!important; }}
         [data-testid="stTextInput"] input:focus,[data-testid="stTextArea"] textarea:focus {{ border-color:var(--blue)!important; box-shadow:0 0 0 3px rgba(8,104,232,.10)!important; }}
-        [data-testid="stChatInput"] {{ max-width:760px; margin:0 auto; border:1px solid var(--line-strong); border-radius:15px; background:var(--panel); box-shadow:0 13px 30px rgba(26,38,58,.10); }}
-        [data-testid="stChatMessage"] {{ border:0; border-bottom:1px solid var(--line); border-radius:0; background:transparent; padding:.95rem .1rem; }}
-        [data-testid="stChatMessageAvatarUser"] {{ background:var(--blue-soft)!important; color:var(--blue)!important; }}
-        [data-testid="stChatMessageAvatarAssistant"] {{ background:#17202d!important; color:#fff!important; }}
+        [data-testid="stBottom"] {{ background:transparent!important; }}
+        [data-testid="stBottom"]>div {{ background:linear-gradient(180deg,rgba(247,248,250,0),rgba(247,248,250,.84) 34%,rgba(247,248,250,.96) 100%)!important; }}
+        [data-testid="stChatInput"] {{ max-width:720px; min-height:66px; margin:0 auto 1rem; border:1px solid rgba(255,255,255,.9); border-radius:22px; background:rgba(255,255,255,.68); box-shadow:inset 0 1px 0 rgba(255,255,255,.98),0 18px 48px rgba(31,43,64,.13); backdrop-filter:blur(26px) saturate(1.25); }}
+        [data-testid="stChatInput"] textarea {{ background:transparent!important; }}
+        [data-testid="stChatInput"] button {{ border-radius:999px!important; transition:transform .18s cubic-bezier(.16,1,.3,1),background .18s ease!important; }}
+        [data-testid="stChatInput"] button:active {{ transform:scale(.92); }}
+        [data-testid="stMainBlockContainer"]:has(.agent-mode-marker) [data-testid="stChatMessage"] {{ max-width:720px; margin:.4rem auto; border:0; background:transparent; padding:1rem .15rem; }}
+        [data-testid="stMainBlockContainer"]:has(.agent-mode-marker) [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) {{ width:fit-content; max-width:min(78%,620px); margin-left:auto; margin-right:calc((100% - min(720px,100%))/2); padding:.72rem .95rem; border:1px solid rgba(217,222,229,.72); border-radius:20px 20px 6px 20px; background:rgba(235,237,241,.78); box-shadow:inset 0 1px 0 rgba(255,255,255,.82); backdrop-filter:blur(16px); }}
+        [data-testid="stChatMessageAvatarUser"] {{ display:none!important; }}
+        [data-testid="stChatMessageAvatarAssistant"] {{ width:30px!important; height:30px!important; border-radius:50%!important; background:radial-gradient(circle at 30% 24%,#e3efff 0,#7bb0ff 34%,#0b68e8 74%)!important; color:transparent!important; box-shadow:inset 0 1px 2px rgba(255,255,255,.7),0 6px 16px rgba(20,107,230,.16); }}
+        [class*="st-key-archive-chat-"] {{ max-width:720px; margin:.65rem auto; }}
         [data-testid="stExpander"] {{ border:1px solid var(--line)!important; border-radius:10px!important; background:var(--panel)!important; }}
         [data-testid="stTabs"] [data-baseweb="tab-list"] {{ border:1px solid var(--line); border-radius:10px; background:var(--panel); gap:0; overflow:hidden; width:fit-content; }}
         [data-testid="stTabs"] button {{ min-width:175px; border-right:1px solid var(--line); border-radius:0; padding:.65rem 1rem; }}
@@ -138,6 +156,7 @@ def _inject_design_system(st: Any, *, first_visit: bool) -> None:
         [data-testid="stFileUploaderDropzone"] {{ min-height:150px; border:1px dashed #9ba6b7; border-radius:10px; background:#fcfcfd; }}
         [data-testid="stProgress"]>div>div {{ background:#e7effa; }} [data-testid="stProgress"]>div>div>div {{ background:var(--blue); }}
         [data-baseweb="popover"] {{ animation:popover-in .18s cubic-bezier(.16,1,.3,1) both; }}
+        [data-baseweb="popover"]>div {{ border-color:rgba(255,255,255,.86)!important; background:rgba(255,255,255,.82)!important; box-shadow:inset 0 1px 0 rgba(255,255,255,.96),0 18px 44px rgba(31,43,64,.12)!important; backdrop-filter:blur(24px) saturate(1.2); }}
         @keyframes popover-in {{ from {{ opacity:0; transform:translateY(-5px) scale(.985); }} to {{ opacity:1; transform:none; }} }}
         .st-key-topic_drawer {{ animation:drawer-in .34s cubic-bezier(.16,1,.3,1) both; }}
         @keyframes drawer-in {{ from {{ opacity:0; transform:translateX(22px); }} to {{ opacity:1; transform:none; }} }}
@@ -146,6 +165,10 @@ def _inject_design_system(st: Any, *, first_visit: bool) -> None:
           [data-testid="stSidebar"] {{ width:260px!important; min-width:260px!important; }}
           [data-testid="stSidebar"]>div:first-child {{ width:260px!important; }}
           [data-testid="stMainBlockContainer"] {{ padding:1.15rem 1rem 2.4rem; }}
+          [data-testid="stMainBlockContainer"]:has(.agent-mode-marker) {{ padding-left:1rem; padding-right:1rem; }}
+          .st-key-research_topbar [data-testid="stSelectbox"] {{ max-width:180px; }}
+          .st-key-agent_scope_glass {{ max-width:100%; border-radius:17px; }}
+          .st-key-agent_scope_glass [data-testid="stHorizontalBlock"] {{ flex-wrap:wrap; }}
           .hero-welcome {{ min-height:300px; }} .hero-title {{ font-size:1.75rem; }}
           [data-testid="stTabs"] button {{ min-width:auto; }}
         }}
@@ -155,21 +178,22 @@ def _inject_design_system(st: Any, *, first_visit: bool) -> None:
 
 
 def _topbar(st: Any, current_page: str, *, badge: str = "可追溯引用") -> str:
-    left, right = st.columns([1, 1])
-    with left:
-        selected = st.selectbox(
-            "研究功能",
-            RESEARCH_PAGES,
-            index=RESEARCH_PAGES.index(current_page),
-            label_visibility="collapsed",
-            key=f"research_page_selector_{current_page}",
-        )
-    with right:
-        st.markdown(
-            f'<div style="text-align:right"><span class="trace-badge">{html.escape(badge)}</span></div>',
-            unsafe_allow_html=True,
-        )
-    st.markdown('<div class="app-topbar"></div>', unsafe_allow_html=True)
+    with st.container(key="research_topbar"):
+        left, right = st.columns([0.45, 1.55])
+        with left:
+            selected = st.selectbox(
+                "研究功能",
+                RESEARCH_PAGES,
+                index=RESEARCH_PAGES.index(current_page),
+                label_visibility="collapsed",
+                key=f"research_page_selector_{current_page}",
+            )
+        with right:
+            st.markdown(
+                f'<div style="text-align:right"><span class="trace-badge">{html.escape(badge)}</span></div>',
+                unsafe_allow_html=True,
+            )
+        st.markdown('<div class="app-topbar"></div>', unsafe_allow_html=True)
     return selected
 
 
@@ -394,6 +418,7 @@ def _sidebar(st: Any, database: LibraryDatabase) -> None:
 
 
 def _agent_page(st: Any, database: LibraryDatabase) -> None:
+    st.markdown('<div class="agent-mode-marker"></div>', unsafe_allow_html=True)
     active_id = st.session_state.get("active_conversation")
     try:
         active = database.get_conversation(active_id) if active_id else None
@@ -414,15 +439,14 @@ def _agent_page(st: Any, database: LibraryDatabase) -> None:
             '<span class="prompt-chip">因果链条</span><span class="prompt-chip">制度演变</span></div></div></section>',
             unsafe_allow_html=True,
         )
-    collection_ids, document_ids = _scope_picker(
-        st,
-        database,
-        key=f"chat-{active_id or 'new'}",
-        default_collection_ids=default_collections,
-        default_document_ids=default_documents,
-    )
-    if messages:
-        _scope_summary(st, collection_ids, document_ids)
+    with st.container(key="agent_scope_glass"):
+        collection_ids, document_ids = _scope_picker(
+            st,
+            database,
+            key=f"chat-{active_id or 'new'}",
+            default_collection_ids=default_collections,
+            default_document_ids=default_documents,
+        )
     for message in messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
