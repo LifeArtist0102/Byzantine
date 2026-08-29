@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import html
 import os
 import subprocess
@@ -69,9 +70,11 @@ def _inject_design_system(st: Any, *, first_visit: bool) -> None:
         #MainMenu, footer, [data-testid="stHeader"] {{ visibility:hidden; }}
         [data-testid="stAppViewContainer"] > .main {{ background:var(--bg); }}
         [data-testid="stMainBlockContainer"] {{ max-width:1440px; padding:1.9rem 2.35rem 2.8rem; }}
-        [data-testid="stSidebar"] {{ width:294px!important; min-width:294px!important; background:var(--sidebar); border-right:1px solid var(--line); }}
+        [data-testid="stSidebar"] {{ position:fixed!important; inset:0 auto 0 0!important; width:294px!important; min-width:294px!important; height:100dvh!important; transform:none!important; visibility:visible!important; z-index:2; background:var(--sidebar); border-right:1px solid var(--line); }}
         [data-testid="stSidebar"] > div:first-child {{ width:294px!important; padding:1.8rem 1.35rem 1.35rem; }}
         [data-testid="stSidebar"] hr {{ border-color:var(--line); margin:.85rem 0; }}
+        [data-testid="stSidebarCollapseButton"],[data-testid="collapsedControl"],[data-testid="stSidebarCollapsedControl"],button[aria-label="Close sidebar"],button[aria-label="Open sidebar"] {{ display:none!important; }}
+        [data-testid="stMain"] {{ width:calc(100% - 294px)!important; margin-left:294px!important; }}
         .historia-brand {{ padding:.1rem .15rem 1.25rem; }}
         .historia-wordmark {{ font-family:Georgia,"Times New Roman",serif; color:#15171b; font-size:2rem; letter-spacing:-.045em; line-height:1; }}
         .historia-subtitle {{ color:var(--muted); font-size:.78rem; margin-top:.4rem; }}
@@ -159,11 +162,15 @@ def _inject_design_system(st: Any, *, first_visit: bool) -> None:
         [data-baseweb="popover"]>div {{ border-color:rgba(255,255,255,.86)!important; background:rgba(255,255,255,.82)!important; box-shadow:inset 0 1px 0 rgba(255,255,255,.96),0 18px 44px rgba(31,43,64,.12)!important; backdrop-filter:blur(24px) saturate(1.2); }}
         @keyframes popover-in {{ from {{ opacity:0; transform:translateY(-5px) scale(.985); }} to {{ opacity:1; transform:none; }} }}
         .st-key-topic_drawer {{ animation:drawer-in .34s cubic-bezier(.16,1,.3,1) both; }}
+        .st-key-import_queue_card {{ border:1px solid var(--line); border-radius:12px; background:rgba(255,255,255,.72); box-shadow:inset 0 1px 0 rgba(255,255,255,.9); padding:.75rem .9rem; margin-bottom:.55rem; }}
+        .import-queue-title {{ color:var(--ink); font-size:.86rem; font-weight:700; }}
+        .import-queue-meta {{ color:var(--muted); font-size:.72rem; line-height:1.55; margin-top:.22rem; }}
         @keyframes drawer-in {{ from {{ opacity:0; transform:translateX(22px); }} to {{ opacity:1; transform:none; }} }}
         {entrance}
         @media(max-width:900px) {{
           [data-testid="stSidebar"] {{ width:260px!important; min-width:260px!important; }}
           [data-testid="stSidebar"]>div:first-child {{ width:260px!important; }}
+          [data-testid="stMain"] {{ width:calc(100% - 260px)!important; margin-left:260px!important; }}
           [data-testid="stMainBlockContainer"] {{ padding:1.15rem 1rem 2.4rem; }}
           [data-testid="stMainBlockContainer"]:has(.agent-mode-marker) {{ padding-left:1rem; padding-right:1rem; }}
           .st-key-research_topbar [data-testid="stSelectbox"] {{ max-width:180px; }}
@@ -982,62 +989,126 @@ def _system_settings(st: Any, database: LibraryDatabase) -> None:
 
 
 def _batch_import(st: Any, database: LibraryDatabase) -> None:
-    uploaded_files = st.file_uploader(
-        "选择文件",
-        type=["pdf", "docx", "txt", "md", "markdown", "jpg", "jpeg", "png"],
-        accept_multiple_files=True,
-        help="支持 PDF、DOCX、TXT、Markdown 与图片；单个文件建议不超过 100 MB。",
-    )
-    if uploaded_files:
-        st.dataframe(
-            [
-                {
-                    "文件名": item.name,
-                    "大小": f"{len(item.getvalue()) / 1024 / 1024:.1f} MB",
-                    "状态": "等待处理",
-                }
-                for item in uploaded_files
-            ],
-            width="stretch",
-            hide_index=True,
+    result = st.session_state.pop("import_result", None)
+    if result:
+        if result["completed"]:
+            st.success(f"成功处理 {len(result['completed'])} 份：{'、'.join(result['completed'])}")
+        if result["failures"]:
+            st.error("\n".join(result["failures"]))
+
+    queue: list[dict[str, Any]] = st.session_state.setdefault("import_queue", [])
+    nonce = int(st.session_state.setdefault("import_form_nonce", 0))
+    intake_col, queue_col = st.columns([1.08, 0.92], gap="large")
+    with intake_col, st.container(border=True):
+        st.subheader("添加一份文献")
+        st.caption("每次选择一份文件并填写它自己的书目信息；可连续加入多份文献。")
+        uploaded = st.file_uploader(
+            "选择单份文件",
+            type=["pdf", "docx", "txt", "md", "markdown", "jpg", "jpeg", "png"],
+            accept_multiple_files=False,
+            help="支持 PDF、DOCX、TXT、Markdown 与图片；单个文件建议不超过 100 MB。",
+            key=f"import-file-{nonce}",
         )
-        st.caption(
-            f"已选择 {len(uploaded_files)} 个文件 · 共 {sum(len(item.getvalue()) for item in uploaded_files) / 1024 / 1024:.1f} MB"
-        )
-    left, right = st.columns([1, 1.55], gap="large")
-    with left, st.container(border=True):
-        st.subheader("导入设置")
-        collection_id = st.selectbox(
-            "导入资料库",
-            ["personal", "starter"],
-            format_func=lambda value: COLLECTION_LABELS[value],
-        )
-        language = st.selectbox("语言", ["Chinese", "English", "Greek", "Latin", "other"])
-        source_type = st.selectbox(
-            "资料类型", ["secondary_study", "primary_source", "translation", "reference_work"]
-        )
-    with right, st.container(border=True):
-        st.subheader("共享书目信息")
-        st.caption("以下信息将应用于本批次全部文献，可留空。")
-        a, b = st.columns(2)
-        author = a.text_input("作者")
-        publisher = b.text_input("出版社")
-        edition = a.text_input("版本")
-        year = b.number_input("出版年份", min_value=0, max_value=3000, value=0)
-    if st.button("开始批量处理", type="primary", disabled=not uploaded_files, width="stretch"):
+        if uploaded is not None:
+            safe_name = Path(uploaded.name).name
+            default_title = Path(safe_name).stem.replace("_", " ")
+            with st.form(f"import-metadata-{nonce}"):
+                title = st.text_input("书名", value=default_title)
+                a, b = st.columns(2)
+                author = a.text_input("作者")
+                publisher = b.text_input("出版社")
+                edition = a.text_input("版本")
+                year = b.number_input("出版年份", min_value=0, max_value=3000, value=0)
+                collection_id = a.selectbox(
+                    "导入资料库",
+                    ["personal", "starter"],
+                    format_func=lambda value: COLLECTION_LABELS[value],
+                )
+                language = b.selectbox("语言", ["Chinese", "English", "Greek", "Latin", "other"])
+                source_type = st.selectbox(
+                    "资料类型",
+                    ["secondary_study", "primary_source", "translation", "reference_work"],
+                )
+                add_to_queue = st.form_submit_button(
+                    "加入待处理队列", type="primary", width="stretch"
+                )
+            if add_to_queue:
+                content = uploaded.getvalue()
+                digest = hashlib.sha256(content).hexdigest()
+                if not title.strip():
+                    st.error("书名不能为空。")
+                elif any(item["file_hash"] == digest for item in queue):
+                    st.warning("这份文件已经在待处理队列中。")
+                else:
+                    queue.append(
+                        {
+                            "queue_id": f"queued_{uuid.uuid4().hex}",
+                            "name": safe_name,
+                            "content": content,
+                            "file_hash": digest,
+                            "size": len(content),
+                            "title": title.strip(),
+                            "author": author.strip() or None,
+                            "publisher": publisher.strip() or None,
+                            "edition": edition.strip() or None,
+                            "publication_year": int(year) or None,
+                            "collection_id": collection_id,
+                            "language": language,
+                            "source_type": source_type,
+                        }
+                    )
+                    st.session_state.import_form_nonce = nonce + 1
+                    st.session_state.import_queue_notice = f"《{title.strip()}》已加入队列。"
+                    st.rerun()
+        else:
+            st.info("先选择一份文献，随后填写该文献的作者、版本和出版信息。")
+
+    with queue_col, st.container(border=True):
+        st.subheader("待处理队列")
+        queue_notice = st.session_state.pop("import_queue_notice", None)
+        if queue_notice:
+            st.success(queue_notice)
+        if not queue:
+            st.caption("队列为空。添加后可一次启动多份文献的处理。")
+        else:
+            total_size = sum(item["size"] for item in queue) / 1024 / 1024
+            st.caption(f"{len(queue)} 份文献 · 共 {total_size:.1f} MB")
+            for item in list(queue):
+                with st.container(border=True):
+                    text_col, action_col = st.columns([4, 1])
+                    with text_col:
+                        st.markdown(
+                            f'<div class="import-queue-title">{html.escape(item["title"])}</div>'
+                            f'<div class="import-queue-meta">{html.escape(item["author"] or "作者未填写")} · '
+                            f"{html.escape(COLLECTION_LABELS[item['collection_id']])} · "
+                            f"{item['size'] / 1024 / 1024:.1f} MB</div>",
+                            unsafe_allow_html=True,
+                        )
+                    if action_col.button(
+                        "移除", key=f"remove-queued-{item['queue_id']}", width="stretch"
+                    ):
+                        st.session_state.import_queue = [
+                            queued for queued in queue if queued["queue_id"] != item["queue_id"]
+                        ]
+                        st.session_state.import_queue_notice = f"《{item['title']}》已移出队列。"
+                        st.rerun()
+
+    if st.button("开始处理队列", type="primary", disabled=not queue, width="stretch"):
         overall = st.progress(0, text="准备导入")
-        report = st.status("批量导入进行中", expanded=True)
+        report = st.status("文献队列处理中", expanded=True)
         started = time.monotonic()
-        total = len(uploaded_files)
+        pending = list(queue)
+        total = len(pending)
         completed: list[str] = []
         failures: list[str] = []
+        failed_items: list[dict[str, Any]] = []
         staging = ensure_app_data_dir() / ".uploads"
         staging.mkdir(exist_ok=True)
-        for index, uploaded in enumerate(uploaded_files):
-            safe_name = Path(uploaded.name).name
+        for index, item in enumerate(pending):
+            safe_name = item["name"]
             local = staging / f"{uuid.uuid4().hex}_{safe_name}"
-            local.write_bytes(uploaded.getvalue())
-            title = Path(safe_name).stem.replace("_", " ")
+            local.write_bytes(item["content"])
+            title = item["title"]
 
             def update(
                 stage: str, fraction: float, *, index: int = index, title: str = title
@@ -1054,15 +1125,15 @@ def _batch_import(st: Any, database: LibraryDatabase) -> None:
                 report.write(f"正在处理：{safe_name}")
                 document = process_document(
                     local,
-                    collection_id=collection_id,
+                    collection_id=item["collection_id"],
                     metadata=BibliographicMetadata(
                         title=title,
-                        author=author.strip() or None,
-                        edition=edition.strip() or None,
-                        publisher=publisher.strip() or None,
-                        publication_year=int(year) or None,
-                        language=language,
-                        source_type=source_type,
+                        author=item["author"],
+                        edition=item["edition"],
+                        publisher=item["publisher"],
+                        publication_year=item["publication_year"],
+                        language=item["language"],
+                        source_type=item["source_type"],
                     ),
                     database=database,
                     seed_path=Path("config/entity_seed.yaml"),
@@ -1071,17 +1142,22 @@ def _batch_import(st: Any, database: LibraryDatabase) -> None:
                 completed.append(document.title)
             except Exception as exc:  # noqa: BLE001
                 failures.append(f"{safe_name}：{exc}")
+                failed_items.append(item)
             finally:
                 local.unlink(missing_ok=True)
             overall.progress((index + 1) / total, text=f"已完成 {index + 1}/{total} 份文献")
-        report.update(label="批量导入完成", state="complete", expanded=bool(failures))
-        if completed:
-            st.success(f"成功处理 {len(completed)} 份：{'、'.join(completed)}")
-        if failures:
-            st.error("\n".join(failures))
+        report.update(label="队列处理完成", state="complete", expanded=bool(failures))
+        st.session_state.import_queue = failed_items
+        st.session_state.import_result = {"completed": completed, "failures": failures}
+        st.rerun()
 
 
 def _library_management(st: Any, database: LibraryDatabase) -> None:
+    notice = st.session_state.pop("library_notice", None)
+    if notice:
+        st.toast(notice)
+        st.success(notice)
+    refresh_nonce = int(st.session_state.setdefault("library_refresh_nonce", 0))
     documents = database.list_documents()
     metrics = st.columns(4)
     metrics[0].metric("文献总数", len(documents))
@@ -1136,7 +1212,12 @@ def _library_management(st: Any, database: LibraryDatabase) -> None:
         _empty_state(st, "没有匹配文献", "请调整搜索词或筛选条件。")
         return
     st.subheader("文献操作")
-    target = st.selectbox("选择文献", filtered, format_func=lambda item: item.title)
+    target = st.selectbox(
+        "选择文献",
+        filtered,
+        format_func=lambda item: item.title,
+        key=f"library-target-{refresh_nonce}",
+    )
     retry_col, delete_col = st.columns(2)
     if retry_col.button("重新处理", width="stretch"):
         bar = st.progress(0, text="准备重新处理")
@@ -1152,11 +1233,22 @@ def _library_management(st: Any, database: LibraryDatabase) -> None:
             st.error(f"重新处理失败：{exc}")
     with delete_col.popover("删除文献", width="stretch"):
         st.warning("删除会同步清理索引、相关研究对话和专题引用，且不可恢复。")
-        confirmed = st.checkbox(f"确认删除《{target.title}》")
-        if st.button("永久删除", disabled=not confirmed, type="primary"):
+        confirmed = st.checkbox(
+            f"确认删除《{target.title}》",
+            key=f"confirm-delete-{target.document_id}-{refresh_nonce}",
+        )
+        if st.button(
+            "永久删除",
+            disabled=not confirmed,
+            type="primary",
+            key=f"delete-document-{target.document_id}-{refresh_nonce}",
+        ):
             try:
                 delete_document_from_library(target.document_id, database=database)
-                st.success("文献与派生记录已删除。")
+                st.session_state.library_notice = (
+                    f"《{target.title}》及其文本块、向量和关联研究记录已删除。"
+                )
+                st.session_state.library_refresh_nonce = refresh_nonce + 1
                 st.rerun()
             except Exception as exc:  # noqa: BLE001
                 st.error(f"删除失败：{exc}")
@@ -1188,7 +1280,9 @@ def _settings_page(st: Any, database: LibraryDatabase) -> None:
 def render() -> None:
     import streamlit as st
 
-    st.set_page_config(page_title="Historia", page_icon="H", layout="wide")
+    st.set_page_config(
+        page_title="Historia", page_icon="H", layout="wide", initial_sidebar_state="expanded"
+    )
     first_visit = not st.session_state.get("_historia_entered", False)
     st.session_state._historia_entered = True
     st.session_state.setdefault("page", "Agent 问答")
