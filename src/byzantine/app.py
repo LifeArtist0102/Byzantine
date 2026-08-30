@@ -584,8 +584,8 @@ def _agent_page(st: Any, database: LibraryDatabase) -> None:
             evidence = expand_context(
                 evidence, database=database, question=prompt, token_budget=4200
             )
-            if not evidence:
-                answer = "当前所选资料的证据不足，无法回答该问题。"
+            if not evidence or not retrieval.assessment.sufficient:
+                answer = "当前检索证据仍不足以可靠回答该问题。请调整问题、补充文献或缩小范围后再试。"
                 status.update(label="未找到充分证据", state="complete")
             elif not load_deepseek_api_key():
                 answer = "已检索到相关证据，但尚未配置 DeepSeek API Key，无法生成综合回答。"

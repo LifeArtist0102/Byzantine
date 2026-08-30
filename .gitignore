@@ -6,7 +6,7 @@ __pycache__/
 .pytest_cache/
 *.egg-info/
 tmp-*.log
-models/
+/models/
 
 # The source book may be copyrighted and is deliberately never committed.
 data/source/*

@@ -98,5 +98,6 @@ def grade_with_deepseek(
         confidence=0.75 if payload.get("sufficient") else 0.35,
         covered_aspects=list(payload.get("covered_aspects") or []),
         missing_aspects=list(payload.get("missing_aspects") or []),
+        retry_queries=list(payload.get("retry_queries") or [])[:3],
         should_retry=not bool(payload.get("sufficient", False)),
     )

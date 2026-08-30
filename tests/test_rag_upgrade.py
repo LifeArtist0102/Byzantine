@@ -194,6 +194,37 @@ def test_alias_query_rrf_dedupe_context_and_colbert_off(tmp_path):
     assert contextual
 
 
+def test_context_expansion_updates_citation_pages_and_source_regions(tmp_path):
+    database, document_id = _database(tmp_path)
+    parent_id = "parent_1"
+    chunks = []
+    for index, page in enumerate((10, 11, 12)):
+        chunks.append(
+            {
+                "chunk_id": f"{document_id}_chunk_{index:05d}",
+                "chunk_index": index,
+                "section_path": ["Chapter"],
+                "text": f"Child {index} explains the process.",
+                "page_start": page,
+                "page_end": page,
+                "parent_id": parent_id,
+                "section_id": "section_1",
+                "source_regions": [
+                    {"region_id": f"r-{page}", "coordinate_space": "pdf_points", "page": page}
+                ],
+                "metadata": {},
+            }
+        )
+    database.save_chunks(document_id, chunks)
+    middle = database.document_evidence(document_id)[1]
+    expanded = expand_context(
+        [middle], database=database, question="What was the process?", token_budget=200
+    )[0]
+    assert expanded.pdf_page_start == 10
+    assert expanded.pdf_page_end == 12
+    assert {region.region_id for region in expanded.source_regions} == {"r-10", "r-11", "r-12"}
+
+
 def test_colbert_is_a_safe_no_model_fallback_when_disabled(monkeypatch):
     monkeypatch.delenv("BYZANTINE_ENABLE_COLBERT", raising=False)
     marker = object()

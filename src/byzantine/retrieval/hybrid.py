@@ -193,7 +193,7 @@ def retrieve_evidence(
         retrieval_query = question
     else:
         parsed = ParsedQuery(
-            original=query_plan.original_query,
+            original=query_plan.rewritten_query,
             people=query_plan.people,
             places=query_plan.places,
             themes=query_plan.topics,
@@ -222,7 +222,7 @@ def retrieve_evidence(
         else []
     )
     sparse_query = " ".join(
-        [question, *parsed.people, *parsed.places, *parsed.events, *parsed.aliases]
+        [retrieval_query, *parsed.people, *parsed.places, *parsed.events, *parsed.aliases]
     )
     sparse = (
         list(
@@ -266,7 +266,7 @@ def retrieve_evidence(
     )
     selected = _dedupe_ranked(ranked, max(top_k, 30))
     if colbert_reranker and os.getenv("BYZANTINE_ENABLE_COLBERT", "0") == "1":
-        selected = list(colbert_reranker(question, selected[:30]))
+        selected = list(colbert_reranker(retrieval_query, selected[:30]))
     return selected[:top_k]
 
 
@@ -298,10 +298,27 @@ def expand_context(
             ]
             merged = "\n\n".join(value.original_text or value.text for value in selected)
             if merged and estimate_tokens(merged) + used <= token_budget:
+                pages = [
+                    page
+                    for value in selected
+                    for page in (value.pdf_page_start, value.pdf_page_end)
+                    if page is not None
+                ]
+                regions = []
+                seen_regions: set[str] = set()
+                for value in selected:
+                    for region in value.source_regions:
+                        key = region.model_dump_json()
+                        if key not in seen_regions:
+                            seen_regions.add(key)
+                            regions.append(region)
                 item = item.model_copy(
                     update={
                         "text": merged,
                         "original_text": merged,
+                        "pdf_page_start": min(pages) if pages else item.pdf_page_start,
+                        "pdf_page_end": max(pages) if pages else item.pdf_page_end,
+                        "source_regions": regions,
                         "metadata": {
                             **item.metadata,
                             "context_chunk_ids": [value.chunk_id for value in selected],

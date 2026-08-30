@@ -4,7 +4,7 @@ from pathlib import Path
 
 from byzantine.models.document import BibliographicMetadata
 from byzantine.models.retrieval import QueryPlan
-from byzantine.retrieval.pipeline import run_adaptive_retrieval
+from byzantine.retrieval.pipeline import _retry_queries, run_adaptive_retrieval
 from byzantine.retrieval.planner import plan_with_deepseek
 from byzantine.retrieval.quality import assess_evidence
 from byzantine.retrieval.query_analysis import analyse_query
@@ -167,3 +167,77 @@ def test_pipeline_retries_once_for_a_complex_insufficient_question(tmp_path):
     assert result.retried
     assert len(result.retry_queries) == 1
     assert calls >= 2
+
+
+def test_rewritten_query_drives_dense_sparse_and_fts_channels(tmp_path):
+    database, document_id, evidence = _database_with_evidence(tmp_path)
+    calls: list[str] = []
+
+    def vector_search(query: str, **_: object):
+        calls.append(query)
+        return [evidence]
+
+    plan = QueryPlan(
+        original_query="unrelated original words",
+        rewritten_query="Constantinople Fourth Crusade 1204",
+    )
+    from byzantine.retrieval.hybrid import retrieve_evidence
+
+    result = retrieve_evidence(
+        plan.original_query,
+        database=database,
+        vector_search=vector_search,
+        sparse_search=vector_search,
+        document_ids=[document_id],
+        query_plan=plan,
+    )
+    assert result
+    assert calls[0] == plan.rewritten_query
+    assert calls[1].startswith(plan.rewritten_query)
+
+
+def test_multi_query_runs_main_and_subqueries_before_reranking(tmp_path):
+    database, document_id, evidence = _database_with_evidence(tmp_path)
+    calls: list[str] = []
+
+    class Completions:
+        def create(self, **_: object):
+            message = type(
+                "Message",
+                (),
+                {
+                    "content": (
+                        '{"intent":"fact_lookup","rewritten_query":"main rewrite",'
+                        '"subqueries":["subquery one","subquery two"],"needs_multi_query":true}'
+                    )
+                },
+            )()
+            return type("Response", (), {"choices": [type("Choice", (), {"message": message})()]})()
+
+    client = type("Client", (), {"chat": type("Chat", (), {"completions": Completions()})()})()
+
+    def vector_search(query: str, **_: object):
+        calls.append(query)
+        return [evidence]
+
+    result = run_adaptive_retrieval(
+        "why did this change?",
+        database=database,
+        vector_search=vector_search,
+        sparse_search=vector_search,
+        document_ids=[document_id],
+        planner_client=client,
+        allow_retry=False,
+    )
+    assert result.planner_used
+    assert {"main rewrite", "subquery one", "subquery two"}.issubset(calls)
+
+
+def test_grader_retry_queries_take_priority_over_planner_and_local_fallback():
+    plan = QueryPlan(
+        original_query="question",
+        rewritten_query="rewrite",
+        subqueries=["planner retry"],
+    )
+    assert _retry_queries(plan, ["grader retry"], ["topic"]) == ["grader retry"]
+    assert _retry_queries(plan, [], ["topic"]) == ["planner retry"]
