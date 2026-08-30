@@ -74,7 +74,7 @@ def _inject_design_system(st: Any, *, first_visit: bool) -> None:
         [data-testid="stSidebar"] > div:first-child {{ width:294px!important; padding:1.8rem 1.35rem 1.35rem; }}
         [data-testid="stSidebar"] hr {{ border-color:var(--line); margin:.85rem 0; }}
         [data-testid="stSidebarCollapseButton"],[data-testid="collapsedControl"],[data-testid="stSidebarCollapsedControl"],button[aria-label="Close sidebar"],button[aria-label="Open sidebar"] {{ display:none!important; }}
-        [data-testid="stMain"] {{ width:calc(100% - 294px)!important; margin-left:294px!important; }}
+        [data-testid="stMain"],[data-testid="stAppScrollToBottomContainer"] {{ width:calc(100% - 294px)!important; margin-left:294px!important; }}
         .historia-brand {{ padding:.1rem .15rem 1.25rem; }}
         .historia-wordmark {{ font-family:Georgia,"Times New Roman",serif; color:#15171b; font-size:2rem; letter-spacing:-.045em; line-height:1; }}
         .historia-subtitle {{ color:var(--muted); font-size:.78rem; margin-top:.4rem; }}
@@ -170,7 +170,7 @@ def _inject_design_system(st: Any, *, first_visit: bool) -> None:
         @media(max-width:900px) {{
           [data-testid="stSidebar"] {{ width:260px!important; min-width:260px!important; }}
           [data-testid="stSidebar"]>div:first-child {{ width:260px!important; }}
-          [data-testid="stMain"] {{ width:calc(100% - 260px)!important; margin-left:260px!important; }}
+          [data-testid="stMain"],[data-testid="stAppScrollToBottomContainer"] {{ width:calc(100% - 260px)!important; margin-left:260px!important; }}
           [data-testid="stMainBlockContainer"] {{ padding:1.15rem 1rem 2.4rem; }}
           [data-testid="stMainBlockContainer"]:has(.agent-mode-marker) {{ padding-left:1rem; padding-right:1rem; }}
           .st-key-research_topbar [data-testid="stSelectbox"] {{ max-width:180px; }}

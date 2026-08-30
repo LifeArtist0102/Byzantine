@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
 
 from byzantine.citations import format_chicago_note, format_gbt7714
+from byzantine.indexing import library_index
 from byzantine.models.document import BibliographicMetadata
 from byzantine.retrieval.hybrid import reciprocal_rank_fusion
 from byzantine.storage.database import LibraryDatabase
@@ -31,6 +33,18 @@ def _document(database: LibraryDatabase, file_hash: str = "a" * 64):
         file_hash=file_hash,
         mime_type="text/plain",
     )
+
+
+def test_qdrant_access_lock_recovers_after_stale_process(tmp_path):
+    qdrant_path = tmp_path / "qdrant"
+    qdrant_path.mkdir()
+    lock_path = qdrant_path / ".historia-qdrant-access.lock"
+    lock_path.write_text("99999999", encoding="ascii")
+
+    with library_index._local_qdrant_access(str(qdrant_path)):
+        assert lock_path.read_text(encoding="ascii") == str(os.getpid())
+
+    assert not lock_path.exists()
 
 
 def _chunk(document_id: str) -> dict[str, object]:

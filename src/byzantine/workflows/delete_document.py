@@ -22,7 +22,10 @@ def delete_document_from_library(document_id: str, *, database: LibraryDatabase)
 
         delete_evidence([item.chunk_id for item in evidence], qdrant_path=str(root / "qdrant"))
     except RuntimeError as exc:
-        raise RuntimeError(f"无法删除 Qdrant 向量；文献尚未删除：{exc}") from exc
+        detail = str(exc)
+        if "already accessed by another instance" in detail:
+            detail = "向量索引正被另一个 Historia 窗口使用。请关闭重复启动的应用窗口后重试。"
+        raise RuntimeError(f"无法删除 Qdrant 向量；文献尚未删除：{detail}") from exc
 
     database.delete_document(document_id)
     documents_root = (root / "documents").resolve()

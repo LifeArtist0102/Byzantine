@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import os
+import time
 from collections.abc import Callable, Sequence
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +13,65 @@ from byzantine.indexing.vector_index import qdrant_id
 from byzantine.models.evidence import Evidence
 
 DEFAULT_COLLECTION = "byzantine_library_v1"
+_QDRANT_LOCK_TIMEOUT_SECONDS = 30.0
+_QDRANT_LOCK_POLL_SECONDS = 0.15
+
+
+def _process_is_running(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+@contextmanager
+def _local_qdrant_access(qdrant_path: str):
+    """Serialize embedded-Qdrant access across local Historia processes."""
+    directory = Path(qdrant_path)
+    directory.mkdir(parents=True, exist_ok=True)
+    lock_path = directory / ".historia-qdrant-access.lock"
+    deadline = time.monotonic() + _QDRANT_LOCK_TIMEOUT_SECONDS
+    file_descriptor: int | None = None
+    while file_descriptor is None:
+        try:
+            file_descriptor = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(file_descriptor, str(os.getpid()).encode("ascii"))
+        except FileExistsError:
+            try:
+                owner_pid = int(lock_path.read_text(encoding="ascii"))
+            except (OSError, ValueError):
+                owner_pid = -1
+            if owner_pid > 0 and not _process_is_running(owner_pid):
+                lock_path.unlink(missing_ok=True)
+                continue
+            if time.monotonic() >= deadline:
+                raise RuntimeError(
+                    "向量索引正在被另一项 Historia 操作使用。请等待当前导入或检索完成后重试。"
+                ) from None
+            time.sleep(_QDRANT_LOCK_POLL_SECONDS)
+    try:
+        yield
+    finally:
+        if file_descriptor is not None:
+            os.close(file_descriptor)
+        try:
+            lock_path.unlink()
+        except FileNotFoundError:
+            pass
+
+
+@contextmanager
+def _qdrant_client(client_class: Any, qdrant_path: str):
+    """Open exactly one local Qdrant client while holding the process lock."""
+    with _local_qdrant_access(qdrant_path):
+        client = client_class(path=qdrant_path)
+        try:
+            yield client
+        finally:
+            client.close()
 
 
 def _model_name() -> str:
@@ -71,8 +132,7 @@ def upsert_evidence(
     _, _, client_class, models = _dependencies()
     model = _load_model()
     batch_size = max(1, int(os.getenv("BYZANTINE_EMBEDDING_BATCH_SIZE", "8")))
-    client = client_class(path=qdrant_path)
-    try:
+    with _qdrant_client(client_class, qdrant_path) as client:
         for start in range(0, len(evidence), batch_size):
             batch = evidence[start : start + batch_size]
             output = model.encode(
@@ -122,8 +182,6 @@ def upsert_evidence(
             print(f"已向量化 {completed}/{len(evidence)} 条证据", flush=True)
             if progress:
                 progress(completed, len(evidence))
-    finally:
-        client.close()
 
 
 def search_evidence(
@@ -157,8 +215,7 @@ def search_evidence(
                 key="collection_id", match=models.MatchAny(any=list(collection_ids))
             )
         )
-    client = client_class(path=qdrant_path)
-    try:
+    with _qdrant_client(client_class, qdrant_path) as client:
         if not client.collection_exists(collection_name):
             return []
         points = client.query_points(
@@ -170,8 +227,6 @@ def search_evidence(
             with_vectors=False,
         ).points
         return [Evidence.model_validate(point.payload["evidence"]) for point in points]
-    finally:
-        client.close()
 
 
 def delete_evidence(
@@ -183,29 +238,23 @@ def delete_evidence(
     if not chunk_ids:
         return
     _, _, client_class, models = _dependencies()
-    client = client_class(path=qdrant_path)
-    try:
+    with _qdrant_client(client_class, qdrant_path) as client:
         if client.collection_exists(collection_name):
             client.delete(
                 collection_name,
                 points_selector=models.PointIdsList(points=[qdrant_id(item) for item in chunk_ids]),
                 wait=True,
             )
-    finally:
-        client.close()
 
 
 def index_status(*, qdrant_path: str, collection_name: str = DEFAULT_COLLECTION) -> dict[str, Any]:
     """Return a lightweight health report without loading the embedding model."""
     client_class, _ = _qdrant_dependencies()
-    client = client_class(path=qdrant_path)
-    try:
+    with _qdrant_client(client_class, qdrant_path) as client:
         if not client.collection_exists(collection_name):
             return {"healthy": False, "points": 0, "message": "向量集合尚未建立"}
         points = int(client.count(collection_name, exact=True).count)
         return {"healthy": True, "points": points, "message": "向量索引运行正常"}
-    finally:
-        client.close()
 
 
 def rebuild_index(
@@ -217,12 +266,9 @@ def rebuild_index(
 ) -> None:
     """Replace the collection and rebuild it from canonical SQLite evidence."""
     client_class, _ = _qdrant_dependencies()
-    client = client_class(path=qdrant_path)
-    try:
+    with _qdrant_client(client_class, qdrant_path) as client:
         if client.collection_exists(collection_name):
             client.delete_collection(collection_name)
-    finally:
-        client.close()
     upsert_evidence(
         evidence,
         qdrant_path=qdrant_path,
