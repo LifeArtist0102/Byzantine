@@ -29,7 +29,7 @@ def test_sources_keep_book_citations() -> None:
 
     assert sources[0].label == "S1"
     assert sources[0].pages == "PDF pp. 298-299"
-    assert "<SOURCE label=\"[S1]\">" in prompt
+    assert '<SOURCE label="[S1]">' in prompt
 
 
 def test_validation_rejects_missing_or_unknown_citations() -> None:

@@ -144,6 +144,7 @@ def test_txt_import_preserves_document_scope_and_text_regions(tmp_path, monkeypa
     assert document.status == "ready"
     assert evidence[0].document_id == document.document_id
     assert evidence[0].source_regions[0].coordinate_space == "text_characters"
+    assert evidence[0].metadata["trusted"]["bibliographic"]["title"] == "Chronicle"
 
 
 def test_pdf_import_persists_page_and_bbox(tmp_path, monkeypatch):
@@ -190,6 +191,23 @@ def test_pdf_layout_blocks_are_aggregated_into_one_evidence_chunk(tmp_path):
     assert page_count == 1
     assert len(chunks) == 1
     assert len(chunks[0]["source_regions"]) == 3
+
+
+def test_pdf_layout_heading_builds_a_section_path_and_keeps_body_bbox(tmp_path):
+    import fitz
+
+    source = tmp_path / "headed.pdf"
+    pdf = fitz.open()
+    page = pdf.new_page()
+    page.insert_text((72, 72), "1. The Komnenian restoration", fontsize=18, fontname="hebo")
+    page.insert_text((72, 120), "Alexios governed Constantinople.", fontsize=11)
+    pdf.save(source)
+    pdf.close()
+
+    chunks, _ = _extract_pdf(source, "doc_test")
+
+    assert chunks[0]["section_path"][-1] == "1. The Komnenian restoration"
+    assert chunks[0]["source_regions"][0]["bbox"] is not None
 
 
 def test_docx_import_preserves_headings_and_tables(tmp_path):

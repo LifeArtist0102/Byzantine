@@ -7,7 +7,9 @@ import typer
 from byzantine.chunking.semantic import run_chunking
 from byzantine.ingestion.pipeline import load_book_config
 
-app = typer.Typer(add_completion=False, help="Create page-traceable semantic chunks from Docling Markdown.")
+app = typer.Typer(
+    add_completion=False, help="Create page-traceable semantic chunks from Docling Markdown."
+)
 
 
 @app.command()

@@ -22,7 +22,8 @@ from byzantine.models.document import BibliographicMetadata, DocumentRecord
 from byzantine.models.evidence import Evidence
 from byzantine.paths import ensure_app_data_dir
 from byzantine.research.services import classify_difference, parallel_reading
-from byzantine.retrieval.hybrid import hybrid_search
+from byzantine.retrieval.hybrid import expand_context
+from byzantine.retrieval.pipeline import run_adaptive_retrieval
 from byzantine.storage.database import LibraryDatabase
 from byzantine.workflows.delete_document import delete_document_from_library
 from byzantine.workflows.process_document import process_document, reprocess_document
@@ -226,28 +227,59 @@ def _search(
     collection_ids: list[str] | tuple[str, ...] = (),
     document_ids: list[str] | tuple[str, ...] = (),
     top_k: int = 6,
-) -> list[Evidence]:
-    try:
-        from byzantine.indexing.library_index import search_evidence
+    conversation_context: list[dict[str, str]] | tuple[dict[str, str], ...] = (),
+    return_result: bool = False,
+    progress: Any | None = None,
+    retrieval_intent: str | None = None,
+) -> list[Evidence] | Any:
+    planner_client = None
+    if load_deepseek_api_key():
+        try:
+            from openai import OpenAI
 
-        return hybrid_search(
+            planner_client = OpenAI(api_key=load_deepseek_api_key(), base_url="https://api.deepseek.com")
+        except ImportError:
+            pass
+    try:
+        from byzantine.indexing.library_index import (
+            colbert_rerank,
+            search_evidence,
+            search_sparse_evidence,
+        )
+
+        result = run_adaptive_retrieval(
             query,
             database=database,
             vector_search=lambda text, **kwargs: search_evidence(
                 text, qdrant_path=str(ensure_app_data_dir() / "qdrant"), **kwargs
             ),
+            sparse_search=lambda text, **kwargs: search_sparse_evidence(
+                text, qdrant_path=str(ensure_app_data_dir() / "qdrant"), **kwargs
+            ),
             collection_ids=collection_ids,
             document_ids=document_ids,
             top_k=top_k,
+            seed_path=Path("config/entity_seed.yaml"),
+            reranker=colbert_rerank,
+            conversation_context=conversation_context,
+            planner_client=planner_client,
+            progress=progress,
+            retrieval_intent=retrieval_intent,
         )
-    except (RuntimeError, ValueError):
-        return hybrid_search(
+    except (RuntimeError, ValueError, ImportError):
+        result = run_adaptive_retrieval(
             query,
             database=database,
             collection_ids=collection_ids,
             document_ids=document_ids,
             top_k=top_k,
+            seed_path=Path("config/entity_seed.yaml"),
+            conversation_context=conversation_context,
+            planner_client=None,
+            progress=progress,
+            retrieval_intent=retrieval_intent,
         )
+    return result if return_result else result.evidence
 
 
 def _retrieval_result(question: str, evidence: list[Evidence]) -> dict[str, Any]:
@@ -259,11 +291,14 @@ def _retrieval_result(question: str, evidence: list[Evidence]) -> dict[str, Any]
                 "page_start": item.pdf_page_start,
                 "page_end": item.pdf_page_end,
                 "text": item.text,
+                "original_text": item.original_text or item.text,
+                "retrieval_text": item.retrieval_text,
                 "title": item.title,
                 "author": item.author,
                 "edition": item.edition,
                 "collection_type": item.collection_type,
                 "source_regions": [region.model_dump() for region in item.source_regions],
+                "metadata": item.metadata,
             }
             for item in evidence
         ],
@@ -359,6 +394,13 @@ def _scope_summary(st: Any, collection_ids: list[str], document_ids: list[str]) 
 
 def _chat_context(messages: list[dict[str, Any]]) -> str:
     return "\n".join(f"{item['role']}: {item['content'][:900]}" for item in messages[-8:])
+
+
+def _planner_context(messages: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """Conversation is intent context for retrieval, never historical evidence."""
+    return [
+        {"role": str(item["role"]), "content": str(item["content"])} for item in messages[-4:]
+    ]
 
 
 def _sidebar(st: Any, database: LibraryDatabase) -> None:
@@ -528,12 +570,19 @@ def _agent_page(st: Any, database: LibraryDatabase) -> None:
     database.add_chat_message(conversation_id, role="user", content=prompt)
     with st.chat_message("assistant"):
         with st.status("正在检索史料并核对出处", expanded=True) as status:
-            evidence = _search(
+            retrieval = _search(
                 database,
                 prompt,
                 collection_ids=collection_ids,
                 document_ids=document_ids,
                 top_k=6,
+                conversation_context=_planner_context(messages),
+                return_result=True,
+                progress=status.write,
+            )
+            evidence = retrieval.evidence
+            evidence = expand_context(
+                evidence, database=database, question=prompt, token_budget=4200
             )
             if not evidence:
                 answer = "当前所选资料的证据不足，无法回答该问题。"
@@ -733,14 +782,18 @@ def _comparison_page(st: Any, database: LibraryDatabase) -> None:
             return
         selected_ids = [document_a.document_id, document_b.document_id]
         with st.status("正在按文献分别检索证据", expanded=True) as status:
-            evidence = _search(
-                database,
-                question,
-                collection_ids=collection_ids,
-                document_ids=selected_ids,
-                top_k=16,
-            )
-            if len({item.document_id for item in evidence}) < 2:
+            evidence_by_document = {
+                document_id: _search(
+                    database,
+                    question,
+                    collection_ids=collection_ids,
+                    document_ids=[document_id],
+                    top_k=8,
+                )
+                for document_id in selected_ids
+            }
+            evidence = [item for values in evidence_by_document.values() for item in values]
+            if any(not values for values in evidence_by_document.values()):
                 status.update(label="证据覆盖不足", state="error")
                 st.warning("当前问题没有同时命中两篇文献，请调整问题。")
                 return
@@ -808,6 +861,7 @@ def _contradiction_page(st: Any, database: LibraryDatabase) -> None:
                     collection_ids=collection_ids,
                     document_ids=document_ids,
                     top_k=4,
+                    retrieval_intent="support",
                 ),
                 "oppose": _search(
                     database,
@@ -815,6 +869,7 @@ def _contradiction_page(st: Any, database: LibraryDatabase) -> None:
                     collection_ids=collection_ids,
                     document_ids=document_ids,
                     top_k=4,
+                    retrieval_intent="oppose",
                 ),
                 "qualify": _search(
                     database,
@@ -822,6 +877,7 @@ def _contradiction_page(st: Any, database: LibraryDatabase) -> None:
                     collection_ids=collection_ids,
                     document_ids=document_ids,
                     top_k=4,
+                    retrieval_intent="qualify",
                 ),
             }
             for support in groups["support"]:

@@ -5,37 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
-
-def build_metadata_filter(
-    *,
-    people: Sequence[str] = (),
-    places: Sequence[str] = (),
-    topics: Sequence[str] = (),
-    date_start: int | None = None,
-    date_end: int | None = None,
-) -> Any | None:
-    """Build an AND filter, with OR semantics inside each label type."""
-    try:
-        from qdrant_client import models
-    except ImportError as exc:  # pragma: no cover
-        raise RuntimeError('Install retrieval dependencies with `pip install -e ".[rag]"`.') from exc
-
-    must: list[Any] = []
-    for key, values in (
-        ("metadata.people", people),
-        ("metadata.places", places),
-        ("metadata.topics", topics),
-    ):
-        cleaned = [value.strip() for value in values if value.strip()]
-        if cleaned:
-            must.append(models.FieldCondition(key=key, match=models.MatchAny(any=cleaned)))
-
-    # A date filter means overlap with the requested historical range.
-    if date_start is not None:
-        must.append(models.FieldCondition(key="metadata.date_end", range=models.Range(gte=date_start)))
-    if date_end is not None:
-        must.append(models.FieldCondition(key="metadata.date_start", range=models.Range(lte=date_end)))
-    return models.Filter(must=must) if must else None
+from byzantine.retrieval.filters import build_metadata_filter
 
 
 def load_embedding_model(model_name: str) -> tuple[Any, str]:
@@ -44,7 +14,9 @@ def load_embedding_model(model_name: str) -> tuple[Any, str]:
         import torch
         from FlagEmbedding import BGEM3FlagModel
     except ImportError as exc:  # pragma: no cover
-        raise RuntimeError('Install retrieval dependencies with `pip install -e ".[rag]"`.') from exc
+        raise RuntimeError(
+            'Install retrieval dependencies with `pip install -e ".[rag]"`.'
+        ) from exc
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     return BGEM3FlagModel(model_name, use_fp16=device == "cuda", device=device), device
@@ -75,7 +47,9 @@ def search_local_index(
     try:
         from qdrant_client import QdrantClient
     except ImportError as exc:  # pragma: no cover
-        raise RuntimeError('Install retrieval dependencies with `pip install -e ".[rag]"`.') from exc
+        raise RuntimeError(
+            'Install retrieval dependencies with `pip install -e ".[rag]"`.'
+        ) from exc
 
     model, device = load_embedding_model(model_name)
     encoded = model.encode(
@@ -98,7 +72,9 @@ def search_local_index(
     client = QdrantClient(path=qdrant_path)
     try:
         if not client.collection_exists(collection_name):
-            raise ValueError(f"Collection {collection_name!r} does not exist. Run byzantine-index first.")
+            raise ValueError(
+                f"Collection {collection_name!r} does not exist. Run byzantine-index first."
+            )
         response = client.query_points(
             collection_name=collection_name,
             query=query_vector,
@@ -141,8 +117,10 @@ def render_evidence(result: dict[str, Any], *, text_limit: int = 800) -> str:
     """Render source evidence for terminal inspection without pretending to answer."""
     lines = [f"Question: {result['query']}", f"Matches: {len(result['hits'])}"]
     for index, hit in enumerate(result["hits"], start=1):
-        pages = f"p. {hit['page_start']}" if hit["page_start"] == hit["page_end"] else (
-            f"pp. {hit['page_start']}-{hit['page_end']}"
+        pages = (
+            f"p. {hit['page_start']}"
+            if hit["page_start"] == hit["page_end"]
+            else (f"pp. {hit['page_start']}-{hit['page_end']}")
         )
         section = " > ".join(hit["section_path"])
         text = " ".join(hit["text"].split())

@@ -15,7 +15,9 @@ from byzantine.generation.deepseek import (
 from byzantine.ingestion.pipeline import load_book_config
 from byzantine.retrieval.search import search_local_index
 
-app = typer.Typer(add_completion=False, help="Answer Byzantine-history questions from retrieved book evidence.")
+app = typer.Typer(
+    add_completion=False, help="Answer Byzantine-history questions from retrieved book evidence."
+)
 
 
 @app.command()
@@ -60,7 +62,9 @@ def run(
         temperature=float(generation["temperature"]),
         max_evidence_characters=int(generation["max_evidence_characters"]),
     )
-    typer.echo(json.dumps(answer, ensure_ascii=False, indent=2) if json_output else render_answer(answer))
+    typer.echo(
+        json.dumps(answer, ensure_ascii=False, indent=2) if json_output else render_answer(answer)
+    )
 
 
 if __name__ == "__main__":

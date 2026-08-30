@@ -55,7 +55,9 @@ def create_local_index(
         from FlagEmbedding import BGEM3FlagModel
         from qdrant_client import QdrantClient, models
     except ImportError as exc:  # pragma: no cover - dependency error for users
-        raise RuntimeError('Install retrieval dependencies with `pip install -e ".[rag]"`.') from exc
+        raise RuntimeError(
+            'Install retrieval dependencies with `pip install -e ".[rag]"`.'
+        ) from exc
 
     chunks = load_enriched_chunks(chunks_path)
     if not chunks:
@@ -101,7 +103,9 @@ def create_local_index(
                         ("metadata.date_end", models.PayloadSchemaType.INTEGER),
                         ("page_start", models.PayloadSchemaType.INTEGER),
                     ):
-                        client.create_payload_index(collection_name, field_name=field, field_schema=schema)
+                        client.create_payload_index(
+                            collection_name, field_name=field, field_schema=schema
+                        )
             client.upsert(
                 collection_name=collection_name,
                 points=[

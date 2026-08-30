@@ -19,7 +19,9 @@ def test_parser_retains_title_when_an_ocr_split_author_heading_follows() -> None
 
 
 def test_parser_excludes_everything_after_an_ocr_split_index_heading() -> None:
-    markdown = """## PART I\n## A chapter\n\nUseful historical prose.\n\n## INDE X\n\nAbbasid 265."""
+    markdown = (
+        """## PART I\n## A chapter\n\nUseful historical prose.\n\n## INDE X\n\nAbbasid 265."""
+    )
     paragraphs = parse_markdown_paragraphs(markdown)
     assert len(paragraphs) == 1
 

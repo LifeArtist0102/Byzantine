@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import hashlib
 import mimetypes
+import os
+import re
 import shutil
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from byzantine.metadata.enrichment import enrich_chunk, load_seed
+from byzantine.chunking.semantic import build_hierarchical_chunks
+from byzantine.metadata.enrichment import build_retrieval_text, enrich_chunk, load_seed
+from byzantine.metadata.inference import infer_metadata_batches
 from byzantine.models.document import BibliographicMetadata, DocumentRecord
 from byzantine.paths import ensure_app_data_dir
 from byzantine.storage.database import LibraryDatabase
@@ -33,6 +37,37 @@ def _link_chunks(chunks: list[dict[str, Any]], document_id: str) -> list[dict[st
         chunk["prev_chunk_id"] = chunks[index - 1]["chunk_id"] if index else None
         chunk["next_chunk_id"] = chunks[index + 1]["chunk_id"] if index + 1 < len(chunks) else None
     return chunks
+
+
+def _local_semantic_embedder() -> Callable[[list[str]], list[list[float]]] | None:
+    """Use a local BGE-M3 model for boundary hints, never an online model."""
+    if os.getenv("BYZANTINE_SEMANTIC_BOUNDARIES", "1") == "0":
+        return None
+    model_path = os.getenv("BYZANTINE_EMBEDDING_MODEL")
+    bundled = Path(__file__).resolve().parents[3] / "models" / "bge-m3"
+    if not model_path and bundled.is_dir():
+        model_path = str(bundled)
+    if not model_path:
+        return None
+    try:
+        import torch
+        from FlagEmbedding import BGEM3FlagModel
+    except ImportError:
+        return None
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model = BGEM3FlagModel(model_path, use_fp16=device == "cuda", device=device)
+
+    def embed(texts: list[str]) -> list[list[float]]:
+        return model.encode(
+            texts,
+            batch_size=8,
+            max_length=1024,
+            return_dense=True,
+            return_sparse=False,
+            return_colbert_vecs=False,
+        )["dense_vecs"].tolist()
+
+    return embed
 
 
 def _text_chunks(
@@ -69,13 +104,28 @@ def _extract_pdf(path: Path, document_id: str) -> tuple[list[dict[str, Any]], in
     except ImportError as exc:  # pragma: no cover
         raise RuntimeError('请安装 PyMuPDF：pip install -e ".[app]"') from exc
     chunks: list[dict[str, Any]] = []
+    section_path = ["PDF document"]
+    numbered_heading = re.compile(r"^(?:\d+(?:\.\d+)*|[IVXLC]+)\.?\s+", re.IGNORECASE)
     with fitz.open(path) as pdf:
         for page_number, page in enumerate(pdf, start=1):
-            blocks = sorted(page.get_text("blocks"), key=lambda block: (block[1], block[0]))
+            page_dict = page.get_text("dict")
+            text_blocks = sorted(
+                [block for block in page_dict.get("blocks", []) if block.get("type") == 0],
+                key=lambda block: (block["bbox"][1], block["bbox"][0]),
+            )
+            span_sizes = [
+                span.get("size", 0.0)
+                for block in text_blocks
+                for line in block.get("lines", [])
+                for span in line.get("spans", [])
+                if span.get("text", "").strip()
+            ]
+            body_size = sorted(span_sizes)[len(span_sizes) // 2] if span_sizes else 0.0
             buffer: list[str] = []
             regions: list[dict[str, Any]] = []
 
             def emit(
+                path: list[str],
                 buffer: list[str] = buffer,
                 regions: list[dict[str, Any]] = regions,
                 page_number: int = page_number,
@@ -88,7 +138,7 @@ def _extract_pdf(path: Path, document_id: str) -> tuple[list[dict[str, Any]], in
                         {
                             "chunk_id": "",
                             "chunk_index": 0,
-                            "section_path": [f"PDF page {page_number}"],
+                            "section_path": path.copy(),
                             "text": text,
                             "search_text": text,
                             "page_start": page_number,
@@ -100,10 +150,32 @@ def _extract_pdf(path: Path, document_id: str) -> tuple[list[dict[str, Any]], in
                 buffer.clear()
                 regions.clear()
 
-            for block_index, block in enumerate(blocks):
-                x0, y0, x1, y1, text, *_ = block
-                text = str(text).strip()
+            for block_index, block in enumerate(text_blocks):
+                x0, y0, x1, y1 = block["bbox"]
+                spans = [
+                    span
+                    for line in block.get("lines", [])
+                    for span in line.get("spans", [])
+                    if span.get("text", "").strip()
+                ]
+                text = " ".join(str(span["text"]).strip() for span in spans).strip()
                 if not text:
+                    continue
+                max_size = max((float(span.get("size", 0.0)) for span in spans), default=0.0)
+                bold = any("bold" in str(span.get("font", "")).casefold() for span in spans)
+                word_count = len(text.split())
+                is_heading = word_count <= 28 and (
+                    bool(numbered_heading.match(text))
+                    or (body_size and max_size >= body_size * 1.18)
+                    or (bold and max_size >= body_size)
+                )
+                if is_heading:
+                    emit(section_path)
+                    # Numbered headings carry a conservative hierarchy; other
+                    # typographic headings begin a new section at this level.
+                    number = numbered_heading.match(text)
+                    level = number.group(0).count(".") + 1 if number else 1
+                    section_path = [*section_path[:level], text]
                     continue
                 region = {
                     "page": page_number,
@@ -114,16 +186,16 @@ def _extract_pdf(path: Path, document_id: str) -> tuple[list[dict[str, Any]], in
                     "page_height": page.rect.height,
                 }
                 if buffer and len("\n\n".join(buffer)) + len(text) + 2 > 2200:
-                    emit()
+                    emit(section_path)
                 for start in range(0, len(text), 2600):
                     part = text[start : start + 2600]
                     if buffer and len("\n\n".join(buffer)) + len(part) + 2 > 2200:
-                        emit()
+                        emit(section_path)
                     buffer.append(part)
                     regions.append(region)
                     if len(part) >= 2600:
-                        emit()
-            emit()
+                        emit(section_path)
+            emit(section_path)
         return _link_chunks(chunks, document_id), len(pdf)
 
 
@@ -257,7 +329,62 @@ def _run_pipeline(
     if progress:
         progress("正在聚合段落并生成检索元数据", 0.30)
     seed = load_seed(seed_path) if seed_path else {}
-    chunks = [enrich_chunk(chunk, seed) for chunk in chunks]
+    chunks = build_hierarchical_chunks(
+        chunks,
+        document_id=document.document_id,
+        semantic_embedder=_local_semantic_embedder(),
+    )
+    # Deterministic enrichment always happens first.  Optional LLM metadata
+    # only augments the difficult children selected by its gate below.
+    enriched = [enrich_chunk(chunk, seed) for chunk in chunks]
+    bibliographic = document.model_dump(mode="json")
+    trusted_bibliographic = {
+        key: bibliographic.get(key)
+        for key in (
+            "title",
+            "author",
+            "translator",
+            "edition",
+            "publisher",
+            "publication_year",
+            "language",
+            "source_type",
+        )
+        if bibliographic.get(key) not in (None, "")
+    }
+    for item in enriched:
+        item["metadata"].setdefault("trusted", {})["bibliographic"] = trusted_bibliographic
+    if os.getenv("BYZANTINE_ENABLE_METADATA_LLM", "0") == "1":
+        api_key = os.getenv("DEEPSEEK_API_KEY")
+        if api_key:
+            try:
+                from openai import OpenAI
+
+                enriched = infer_metadata_batches(
+                    enriched,
+                    database=database,
+                    document_hash=document.file_hash,
+                    model_name=os.getenv("BYZANTINE_METADATA_MODEL", "deepseek-chat"),
+                    client=OpenAI(api_key=api_key, base_url="https://api.deepseek.com"),
+                )
+            except (ImportError, RuntimeError, ValueError):
+                # Importing a document must not fail merely because optional
+                # retrieval metadata could not be inferred.
+                pass
+    finalized: list[dict[str, Any]] = []
+    for item in enriched:
+        metadata = item["metadata"]
+        item["retrieval_text"] = build_retrieval_text(
+            item["original_text"],
+            bibliographic=bibliographic,
+            section_path=item["section_path"],
+            trusted=dict(metadata.get("trusted", {})),
+            candidates=dict(metadata.get("candidate", {})),
+            llm=dict(metadata.get("llm_inference", {})),
+        )
+        item["search_text"] = item["retrieval_text"]
+        finalized.append(item)
+    chunks = finalized
     try:
         from byzantine.indexing.library_index import delete_evidence
 

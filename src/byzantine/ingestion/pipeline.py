@@ -129,11 +129,7 @@ def run_ingestion(
         config.get("quality_gate", {}).get("min_extracted_characters_per_text_page", 120)
     )
     blank_pages = [page.pdf_page for page in pages if page.extracted_characters == 0]
-    low_text_pages = [
-        page.pdf_page
-        for page in pages
-        if 0 < page.extracted_characters < threshold
-    ]
+    low_text_pages = [page.pdf_page for page in pages if 0 < page.extracted_characters < threshold]
 
     with (destination / "pages.jsonl").open("w", encoding="utf-8") as handle:
         for page in pages:

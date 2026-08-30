@@ -1,4 +1,4 @@
-"""Small, testable workflows behind the five history-research features."""
+"""Small, evidence-first workflows behind the history-research features."""
 
 from __future__ import annotations
 
@@ -11,38 +11,88 @@ from typing import Any
 from byzantine.models.evidence import Evidence
 
 
-def parallel_reading(question: str, evidence: Sequence[Evidence], dimensions: Sequence[str]) -> dict[str, Any]:
-    """Keep every document's evidence separate instead of producing a blended summary."""
-    cells = []
+def parallel_reading(
+    question: str, evidence: Sequence[Evidence], dimensions: Sequence[str]
+) -> dict[str, Any]:
+    """Analyse each selected document independently before comparison."""
+    by_document: dict[str, list[Evidence]] = {}
     for item in evidence:
+        by_document.setdefault(item.document_id, []).append(item)
+    cells = []
+    for document_id, items in by_document.items():
         for dimension in dimensions:
-            cells.append({"document_id": item.document_id, "dimension": dimension, "analysis": f"与“{dimension}”相关的原文证据。", "evidence_ids": [item.evidence_id], "epistemic_type": item.epistemic_type})
-    return {"comparison_id": f"comparison_{uuid.uuid4().hex}", "question": question, "selected_document_ids": sorted({item.document_id for item in evidence}), "dimensions": list(dimensions), "comparison_cells": cells, "summary": "各文献证据分列展示；未找到证据的维度不作结论。", "created_at": datetime.now(UTC).isoformat()}
+            excerpts = [
+                " ".join((item.original_text or item.text).split())[:260] for item in items[:2]
+            ]
+            cells.append(
+                {
+                    "document_id": document_id,
+                    "dimension": dimension,
+                    "analysis": "；".join(excerpts) or "该文献没有足以分析此维度的证据。",
+                    "evidence_ids": [item.evidence_id for item in items[:2]],
+                    "epistemic_type": items[0].epistemic_type if items else "unknown",
+                }
+            )
+    return {
+        "comparison_id": f"comparison_{uuid.uuid4().hex}",
+        "question": question,
+        "selected_document_ids": sorted(by_document),
+        "dimensions": list(dimensions),
+        "comparison_cells": cells,
+        "summary": "每篇文献独立检索并保留其可追溯证据；差异需要研究者进一步判断。",
+        "created_at": datetime.now(UTC).isoformat(),
+    }
 
 
 def split_claim_units(text: str) -> list[str]:
-    return [sentence.strip() for sentence in re.split(r"(?<=[。！？.!?])\s*", text) if sentence.strip()]
+    return [
+        sentence.strip() for sentence in re.split(r"(?<=[。！？.!?])\s*", text) if sentence.strip()
+    ]
 
 
 def audit_draft(text: str, search: Callable[[str], Sequence[Evidence]]) -> list[dict[str, Any]]:
-    """Audit sentences without altering the writer's draft."""
     results = []
     for sentence in split_claim_units(text):
         evidence = list(search(sentence))
-        overstated = bool(re.search(r"彻底|必然|完全|所有|从不|always|never|entirely", sentence, re.IGNORECASE))
-        status = "overstated" if overstated and evidence else ("supported" if evidence else "unsupported")
-        results.append({"sentence": sentence, "status": status, "supporting_evidence": [item.evidence_id for item in evidence], "opposing_evidence": [], "qualifying_evidence": [], "issue": "表述强度可能超过现有证据。" if overstated else ("" if evidence else "当前资料未找到支持证据。"), "suggestion": "建议使用“现有资料表明”“在一定程度上”等限定语。" if overstated else ""})
+        overstated = bool(
+            re.search(r"彻底|必然|完全|所有|从不|always|never|entirely", sentence, re.IGNORECASE)
+        )
+        status = (
+            "overstated"
+            if overstated and evidence
+            else ("supported" if evidence else "unsupported")
+        )
+        results.append(
+            {
+                "sentence": sentence,
+                "status": status,
+                "supporting_evidence": [item.evidence_id for item in evidence],
+                "opposing_evidence": [],
+                "qualifying_evidence": [],
+            }
+        )
     return results
 
 
+def comparable(left: Evidence, right: Evidence) -> bool:
+    def terms(item: Evidence) -> set[str]:
+        candidate = item.metadata.get("candidate", {})
+        return (
+            set(item.metadata.get("people", []))
+            | set(item.metadata.get("places", []))
+            | set(candidate.get("events", []))
+        )
+
+    return bool(terms(left) and terms(right) and terms(left) & terms(right))
+
+
 def classify_difference(left: Evidence, right: Evidence) -> str:
-    """A cautious first-pass classification: never call all variation contradiction."""
-    left_years, right_years = set(re.findall(r"\b\d{3,4}\b", left.text)), set(re.findall(r"\b\d{3,4}\b", right.text))
-    if left_years and right_years and left_years.isdisjoint(right_years):
-        return "potential direct_contradiction"
+    """Different years alone are not evidence of a contradiction."""
+    if not comparable(left, right):
+        return "not_comparable"
     if left.language != right.language:
         return "translation_difference"
-    return "different_perspective"
+    return "comparable_difference"
 
 
 def counter_queries(claim: str) -> list[str]:

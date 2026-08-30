@@ -61,9 +61,20 @@ class LibraryDatabase:
                 collection_id TEXT NOT NULL REFERENCES collections(collection_id), section_path TEXT NOT NULL,
                 chunk_index INTEGER NOT NULL, text TEXT NOT NULL, search_text TEXT NOT NULL,
                 page_start INTEGER, page_end INTEGER, printed_page_start INTEGER, printed_page_end INTEGER,
-                source_regions TEXT NOT NULL, prev_chunk_id TEXT, next_chunk_id TEXT, metadata_json TEXT NOT NULL)""",
+                source_regions TEXT NOT NULL, prev_chunk_id TEXT, next_chunk_id TEXT, metadata_json TEXT NOT NULL,
+                original_text TEXT, retrieval_text TEXT, parent_id TEXT, section_id TEXT)""",
             "CREATE INDEX IF NOT EXISTS idx_chunks_document ON chunks(document_id, chunk_index)",
             "CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(chunk_id UNINDEXED, document_id UNINDEXED, collection_id UNINDEXED, search_text)",
+            """CREATE TABLE IF NOT EXISTS parents (
+                parent_id TEXT PRIMARY KEY, document_id TEXT NOT NULL REFERENCES documents(document_id) ON DELETE CASCADE,
+                section_id TEXT NOT NULL, section_path TEXT NOT NULL, parent_index INTEGER NOT NULL,
+                original_text TEXT NOT NULL, token_count INTEGER NOT NULL, page_start INTEGER, page_end INTEGER,
+                source_regions TEXT NOT NULL)""",
+            "CREATE INDEX IF NOT EXISTS idx_parents_document ON parents(document_id, parent_index)",
+            """CREATE TABLE IF NOT EXISTS llm_metadata_cache (
+                cache_key TEXT PRIMARY KEY, document_hash TEXT NOT NULL, chunk_hash TEXT NOT NULL,
+                prompt_version TEXT NOT NULL, model_name TEXT NOT NULL, payload_json TEXT NOT NULL,
+                created_at TEXT NOT NULL)""",
             """CREATE TABLE IF NOT EXISTS research_topics (
                 topic_id TEXT PRIMARY KEY, title TEXT NOT NULL, research_question TEXT, description TEXT,
                 created_at TEXT NOT NULL, updated_at TEXT NOT NULL)""",
@@ -112,6 +123,23 @@ class LibraryDatabase:
         with self.connect() as connection:
             for statement in statements:
                 connection.execute(statement)
+            # Additive migration: old documents and evidence snapshots remain
+            # usable; their original ``text`` is copied lazily below.
+            self._ensure_column(connection, "chunks", "original_text", "TEXT")
+            self._ensure_column(connection, "chunks", "retrieval_text", "TEXT")
+            self._ensure_column(connection, "chunks", "parent_id", "TEXT")
+            self._ensure_column(connection, "chunks", "section_id", "TEXT")
+            # This index must be created after the additive migration: an
+            # existing library has a `chunks` table without `parent_id`.
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_chunks_parent ON chunks(document_id, parent_id, chunk_index)"
+            )
+            connection.execute(
+                "UPDATE chunks SET original_text=text WHERE original_text IS NULL OR original_text=''"
+            )
+            connection.execute(
+                "UPDATE chunks SET retrieval_text=search_text WHERE retrieval_text IS NULL OR retrieval_text=''"
+            )
             now = utc_now()
             for collection_id, name, kind, description in (
                 ("starter", "基础知识库", "starter", "项目所有者导入的合法资料"),
@@ -122,6 +150,14 @@ class LibraryDatabase:
                        VALUES(?,?,?,?,?,?) ON CONFLICT(collection_id) DO NOTHING""",
                     (collection_id, name, kind, description, now, now),
                 )
+
+    @staticmethod
+    def _ensure_column(
+        connection: sqlite3.Connection, table: str, column: str, definition: str
+    ) -> None:
+        columns = {row["name"] for row in connection.execute(f"PRAGMA table_info({table})")}
+        if column not in columns:
+            connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
     def collections(self) -> list[dict[str, Any]]:
         with self.connect() as connection:
@@ -230,18 +266,23 @@ class LibraryDatabase:
         with self.connect() as connection:
             connection.execute("DELETE FROM chunks_fts WHERE document_id=?", (document_id,))
             connection.execute("DELETE FROM chunks WHERE document_id=?", (document_id,))
+            connection.execute("DELETE FROM parents WHERE document_id=?", (document_id,))
+            parents: dict[str, dict[str, Any]] = {}
             for chunk in chunks:
+                parent = chunk.get("parent")
+                if isinstance(parent, dict) and parent.get("parent_id"):
+                    parents[str(parent["parent_id"])] = parent
                 connection.execute(
-                    """INSERT INTO chunks(chunk_id,document_id,collection_id,section_path,chunk_index,text,search_text,page_start,page_end,printed_page_start,printed_page_end,source_regions,prev_chunk_id,next_chunk_id,metadata_json)
-                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    """INSERT INTO chunks(chunk_id,document_id,collection_id,section_path,chunk_index,text,search_text,page_start,page_end,printed_page_start,printed_page_end,source_regions,prev_chunk_id,next_chunk_id,metadata_json,original_text,retrieval_text,parent_id,section_id)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (
                         chunk["chunk_id"],
                         document_id,
                         document.collection_id,
                         json.dumps(chunk.get("section_path", []), ensure_ascii=False),
                         chunk["chunk_index"],
-                        chunk["text"],
-                        chunk.get("search_text", chunk["text"]),
+                        chunk.get("original_text", chunk["text"]),
+                        chunk.get("retrieval_text", chunk.get("search_text", chunk["text"])),
                         chunk.get("page_start"),
                         chunk.get("page_end"),
                         chunk.get("printed_page_start"),
@@ -250,6 +291,10 @@ class LibraryDatabase:
                         chunk.get("prev_chunk_id"),
                         chunk.get("next_chunk_id"),
                         json.dumps(chunk.get("metadata", {}), ensure_ascii=False),
+                        chunk.get("original_text", chunk["text"]),
+                        chunk.get("retrieval_text", chunk.get("search_text", chunk["text"])),
+                        chunk.get("parent_id"),
+                        chunk.get("section_id"),
                     ),
                 )
                 connection.execute(
@@ -258,7 +303,24 @@ class LibraryDatabase:
                         chunk["chunk_id"],
                         document_id,
                         document.collection_id,
-                        chunk.get("search_text", chunk["text"]),
+                        chunk.get("retrieval_text", chunk.get("search_text", chunk["text"])),
+                    ),
+                )
+            for parent in parents.values():
+                connection.execute(
+                    """INSERT INTO parents(parent_id,document_id,section_id,section_path,parent_index,original_text,token_count,page_start,page_end,source_regions)
+                       VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        parent["parent_id"],
+                        document_id,
+                        parent["section_id"],
+                        json.dumps(parent.get("section_path", []), ensure_ascii=False),
+                        parent["parent_index"],
+                        parent["original_text"],
+                        parent["token_count"],
+                        parent.get("page_start"),
+                        parent.get("page_end"),
+                        json.dumps(parent.get("source_regions", []), ensure_ascii=False),
                     ),
                 )
 
@@ -311,6 +373,10 @@ class LibraryDatabase:
             source_regions=json.loads(row["source_regions"]),
             source_file=row["file_path"],
             text=row["text"],
+            original_text=row.get("original_text") or row["text"],
+            retrieval_text=row.get("retrieval_text") or row["search_text"],
+            parent_id=row.get("parent_id"),
+            section_id=row.get("section_id"),
             metadata=json.loads(row["metadata_json"]),
             created_at=utc_now(),
         )
@@ -325,6 +391,49 @@ class LibraryDatabase:
                 (document_id,),
             ).fetchall()
         return [self.evidence_from_row(dict(row)) for row in rows]
+
+    def parent_evidence(self, document_id: str, parent_id: str) -> list[Evidence]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT c.*, d.title,d.author,d.translator,d.edition,d.publisher,d.publication_year,d.language,d.source_type,d.file_path,co.collection_type
+                   FROM chunks c JOIN documents d ON d.document_id=c.document_id
+                   JOIN collections co ON co.collection_id=c.collection_id
+                   WHERE c.document_id=? AND c.parent_id=? ORDER BY c.chunk_index""",
+                (document_id, parent_id),
+            ).fetchall()
+        return [self.evidence_from_row(dict(row)) for row in rows]
+
+    def llm_metadata_get(self, cache_key: str) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT payload_json FROM llm_metadata_cache WHERE cache_key=?", (cache_key,)
+            ).fetchone()
+        return json.loads(row["payload_json"]) if row else None
+
+    def llm_metadata_put(
+        self,
+        *,
+        cache_key: str,
+        document_hash: str,
+        chunk_hash: str,
+        prompt_version: str,
+        model_name: str,
+        payload: dict[str, Any],
+    ) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                """INSERT INTO llm_metadata_cache VALUES(?,?,?,?,?,?,?)
+                   ON CONFLICT(cache_key) DO NOTHING""",
+                (
+                    cache_key,
+                    document_hash,
+                    chunk_hash,
+                    prompt_version,
+                    model_name,
+                    json.dumps(payload, ensure_ascii=False),
+                    utc_now(),
+                ),
+            )
 
     def create_topic(self, title: str, research_question: str = "", description: str = "") -> str:
         topic_id, now = f"topic_{uuid.uuid4().hex}", utc_now()

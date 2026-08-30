@@ -6,14 +6,20 @@ import typer
 
 from byzantine.ingestion.pipeline import load_book_config, run_ingestion
 
-app = typer.Typer(add_completion=False, help="Parse and quality-check a Byzantine history source PDF.")
+app = typer.Typer(
+    add_completion=False, help="Parse and quality-check a Byzantine history source PDF."
+)
 
 
 @app.command()
 def run(
-    source_pdf: Path = typer.Argument(..., exists=True, readable=True, help="Path to the source PDF."),
+    source_pdf: Path = typer.Argument(
+        ..., exists=True, readable=True, help="Path to the source PDF."
+    ),
     config: Path = typer.Option(Path("config/book.yaml"), help="Project book configuration."),
-    output_root: Path = typer.Option(Path("data/processed"), help="Directory for derived artifacts."),
+    output_root: Path = typer.Option(
+        Path("data/processed"), help="Directory for derived artifacts."
+    ),
     skip_docling: bool = typer.Option(False, help="Only create the page map and quality report."),
 ) -> None:
     """Create document.md, pages.jsonl and quality_report.json."""

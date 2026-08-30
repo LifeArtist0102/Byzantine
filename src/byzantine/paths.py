@@ -14,7 +14,7 @@ def app_data_dir() -> Path:
     try:
         from platformdirs import user_data_dir
     except ImportError as exc:  # pragma: no cover
-        raise RuntimeError("请安装 platformdirs：pip install -e \".[app]\"") from exc
+        raise RuntimeError('请安装 platformdirs：pip install -e ".[app]"') from exc
     return Path(user_data_dir("Byzantine", "LifeArtist0102"))
 
 

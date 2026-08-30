@@ -9,7 +9,9 @@ app = typer.Typer(add_completion=False, help="Download the BGE-M3 embedding mode
 
 @app.command()
 def run(
-    output_dir: Path = typer.Option(Path("models/bge-m3"), help="Local directory for model weights."),
+    output_dir: Path = typer.Option(
+        Path("models/bge-m3"), help="Local directory for model weights."
+    ),
 ) -> None:
     """Fetch the public BAAI/bge-m3 weights without downloading book content."""
     try:

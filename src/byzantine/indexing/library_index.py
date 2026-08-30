@@ -11,8 +11,9 @@ from typing import Any
 
 from byzantine.indexing.vector_index import qdrant_id
 from byzantine.models.evidence import Evidence
+from byzantine.retrieval.filters import build_metadata_filter
 
-DEFAULT_COLLECTION = "byzantine_library_v1"
+DEFAULT_COLLECTION = "byzantine_library_v2"
 _QDRANT_LOCK_TIMEOUT_SECONDS = 30.0
 _QDRANT_LOCK_POLL_SECONDS = 0.15
 
@@ -119,6 +120,15 @@ def _payload(item: Evidence) -> dict[str, Any]:
     }
 
 
+def _sparse_vector(weights: dict[Any, Any], models: Any) -> Any:
+    pairs = sorted(
+        (int(token), float(weight)) for token, weight in weights.items() if float(weight) > 0
+    )
+    return models.SparseVector(
+        indices=[item[0] for item in pairs], values=[item[1] for item in pairs]
+    )
+
+
 def upsert_evidence(
     evidence: Sequence[Evidence],
     *,
@@ -136,20 +146,23 @@ def upsert_evidence(
         for start in range(0, len(evidence), batch_size):
             batch = evidence[start : start + batch_size]
             output = model.encode(
-                [item.text for item in batch],
+                [item.retrieval_text or item.text for item in batch],
                 batch_size=batch_size,
                 max_length=4096,
                 return_dense=True,
-                return_sparse=False,
+                return_sparse=True,
                 return_colbert_vecs=False,
             )
             if not client.collection_exists(collection_name):
                 client.create_collection(
                     collection_name,
-                    vectors_config=models.VectorParams(
-                        size=len(output["dense_vecs"][0]),
-                        distance=models.Distance.COSINE,
-                    ),
+                    vectors_config={
+                        "dense": models.VectorParams(
+                            size=len(output["dense_vecs"][0]),
+                            distance=models.Distance.COSINE,
+                        )
+                    },
+                    sparse_vectors_config={"sparse": models.SparseVectorParams()},
                 )
                 for field in (
                     "document_id",
@@ -160,21 +173,37 @@ def upsert_evidence(
                     "metadata.people",
                     "metadata.places",
                     "metadata.topics",
+                    "metadata.trusted.people",
+                    "metadata.trusted.places",
+                    "metadata.candidate.events",
                 ):
                     client.create_payload_index(
                         collection_name,
                         field,
                         models.PayloadSchemaType.KEYWORD,
                     )
+                for field in ("metadata.date_start", "metadata.date_end"):
+                    client.create_payload_index(
+                        collection_name,
+                        field,
+                        models.PayloadSchemaType.INTEGER,
+                    )
             client.upsert(
                 collection_name,
                 points=[
                     models.PointStruct(
                         id=qdrant_id(item.chunk_id),
-                        vector=vector.tolist(),
+                        vector={
+                            "dense": vector.tolist(),
+                            "sparse": _sparse_vector(
+                                output["lexical_weights"][point_index], models
+                            ),
+                        },
                         payload=_payload(item),
                     )
-                    for item, vector in zip(batch, output["dense_vecs"], strict=True)
+                    for point_index, (item, vector) in enumerate(
+                        zip(batch, output["dense_vecs"], strict=True)
+                    )
                 ],
                 wait=True,
             )
@@ -190,11 +219,16 @@ def search_evidence(
     qdrant_path: str,
     document_ids: Sequence[str] = (),
     collection_ids: Sequence[str] = (),
+    people: Sequence[str] = (),
+    places: Sequence[str] = (),
+    topics: Sequence[str] = (),
+    date_start: int | None = None,
+    date_end: int | None = None,
     limit: int = 20,
     collection_name: str = DEFAULT_COLLECTION,
 ) -> list[Evidence]:
     """Return vector-ranked canonical Evidence in the requested scope."""
-    _, _, client_class, models = _dependencies()
+    _, _, client_class, _ = _dependencies()
     model = _load_model()
     vector = model.encode(
         [query],
@@ -204,29 +238,113 @@ def search_evidence(
         return_sparse=False,
         return_colbert_vecs=False,
     )["dense_vecs"][0].tolist()
-    conditions = []
-    if document_ids:
-        conditions.append(
-            models.FieldCondition(key="document_id", match=models.MatchAny(any=list(document_ids)))
-        )
-    if collection_ids:
-        conditions.append(
-            models.FieldCondition(
-                key="collection_id", match=models.MatchAny(any=list(collection_ids))
-            )
-        )
+    query_filter = build_metadata_filter(
+        document_ids=document_ids,
+        collection_ids=collection_ids,
+        people=people,
+        places=places,
+        topics=topics,
+        date_start=date_start,
+        date_end=date_end,
+    )
     with _qdrant_client(client_class, qdrant_path) as client:
         if not client.collection_exists(collection_name):
             return []
         points = client.query_points(
             collection_name,
             query=vector,
-            query_filter=models.Filter(must=conditions) if conditions else None,
+            using="dense",
+            query_filter=query_filter,
             limit=limit,
             with_payload=True,
             with_vectors=False,
         ).points
         return [Evidence.model_validate(point.payload["evidence"]) for point in points]
+
+
+def search_sparse_evidence(
+    query: str,
+    *,
+    qdrant_path: str,
+    document_ids: Sequence[str] = (),
+    collection_ids: Sequence[str] = (),
+    people: Sequence[str] = (),
+    places: Sequence[str] = (),
+    topics: Sequence[str] = (),
+    date_start: int | None = None,
+    date_end: int | None = None,
+    limit: int = 20,
+    collection_name: str = DEFAULT_COLLECTION,
+) -> list[Evidence]:
+    """BGE-M3 lexical recall for names, dates and transliteration variants."""
+    _, _, client_class, models = _dependencies()
+    model = _load_model()
+    weights = model.encode(
+        [query],
+        batch_size=1,
+        max_length=4096,
+        return_dense=False,
+        return_sparse=True,
+        return_colbert_vecs=False,
+    )["lexical_weights"][0]
+    query_filter = build_metadata_filter(
+        document_ids=document_ids,
+        collection_ids=collection_ids,
+        people=people,
+        places=places,
+        topics=topics,
+        date_start=date_start,
+        date_end=date_end,
+    )
+    with _qdrant_client(client_class, qdrant_path) as client:
+        if not client.collection_exists(collection_name):
+            return []
+        points = client.query_points(
+            collection_name,
+            query=_sparse_vector(weights, models),
+            using="sparse",
+            query_filter=query_filter,
+            limit=limit,
+            with_payload=True,
+            with_vectors=False,
+        ).points
+    return [Evidence.model_validate(point.payload["evidence"]) for point in points]
+
+
+def colbert_rerank(query: str, candidates: Sequence[Evidence]) -> list[Evidence]:
+    """Optional BGE-M3 multi-vector reranking of only fused top candidates."""
+    if os.getenv("BYZANTINE_ENABLE_COLBERT", "0") != "1" or not candidates:
+        return list(candidates)
+    model = _load_model()
+    encoded = model.encode(
+        [query, *[(item.retrieval_text or item.text) for item in candidates]],
+        batch_size=4,
+        max_length=1024,
+        return_dense=False,
+        return_sparse=False,
+        return_colbert_vecs=True,
+    )["colbert_vecs"]
+    query_vectors = encoded[0]
+
+    def score(document_vectors: Any) -> float:
+        return sum(
+            max(
+                sum(
+                    float(a) * float(b) for a, b in zip(query_vector, document_vector, strict=False)
+                )
+                for document_vector in document_vectors
+            )
+            for query_vector in query_vectors
+        ) / max(len(query_vectors), 1)
+
+    return [
+        item
+        for _, item in sorted(
+            ((score(vectors), item) for vectors, item in zip(encoded[1:], candidates, strict=True)),
+            reverse=True,
+            key=lambda value: value[0],
+        )
+    ]
 
 
 def delete_evidence(

@@ -1,21 +1,20 @@
-# Conservative, reviewed aliases. Add an alias only when it has an unambiguous
-# canonical form; the enrichment command writes unresolved name-like strings to
-# person_candidates rather than treating them as historical facts.
+# Reviewed aliases only. Local extraction treats these as canonical matches;
+# unresolved names remain candidates and never become citation facts.
 people:
   - canonical: Basil II
-    aliases: ["Basil II", "Basil II Bulgaroktonos"]
+    aliases: ["Basil II", "Basil II Bulgaroktonos", "\u5df4\u897f\u5c14\u4e8c\u4e16", "\u5df4\u897f\u5c14\u4e8c\u4e16\u00b7\u4fdd\u52a0\u5229\u4e9a\u5c60\u592b"]
   - canonical: Alexios I Komnenos
-    aliases: ["Alexios I", "Alexios I Komnenos"]
+    aliases: ["Alexios I", "Alexios I Komnenos", "\u963f\u83b1\u514b\u4fee\u65af\u4e00\u4e16"]
   - canonical: Justinian I
-    aliases: ["Justinian", "Justinian I"]
+    aliases: ["Justinian", "Justinian I", "\u67e5\u58eb\u4e01\u5c3c\u4e00\u4e16"]
   - canonical: Herakleios
-    aliases: ["Herakleios", "Heraclius"]
+    aliases: ["Herakleios", "Heraclius", "\u5e0c\u62c9\u514b\u7565"]
   - canonical: Constantine VII Porphyrogenitus
     aliases: ["Constantine VII", "Constantine VII Porphyrogenitus"]
   - canonical: Michael VIII Palaiologos
     aliases: ["Michael VIII", "Michael VIII Palaiologos"]
   - canonical: Anna Komnene
-    aliases: ["Anna Komnene"]
+    aliases: ["Anna Komnene", "\u5b89\u5a1c\u00b7\u79d1\u59c6\u6ce5\u59ae"]
   - canonical: Nikephoros II Phokas
     aliases: ["Nikephoros II", "Nikephoros II Phokas"]
   - canonical: Romanos I Lekapenos
@@ -30,13 +29,13 @@ people:
     aliases: ["Mehmed II", "Mohammed II"]
 places:
   - canonical: Constantinople
-    aliases: ["Constantinople", "Byzantium"]
+    aliases: ["Constantinople", "Byzantium", "\u541b\u58eb\u5766\u4e01\u5821", "\u62dc\u5360\u5ead\u57ce"]
   - canonical: Anatolia
-    aliases: ["Anatolia", "Asia Minor"]
+    aliases: ["Anatolia", "Asia Minor", "\u5b89\u7eb3\u6258\u5229\u4e9a"]
   - canonical: Balkans
     aliases: ["Balkans", "Balkan peninsula"]
   - canonical: Nicaea
-    aliases: ["Nicaea"]
+    aliases: ["Nicaea", "\u5c3c\u897f\u4e9a"]
   - canonical: Trebizond
     aliases: ["Trebizond"]
   - canonical: Thessalonike
@@ -67,3 +66,29 @@ topics:
   government: [emperor, imperial, court, bureaucracy, administration, law]
   society: [family, women, health, food, population, education, slavery]
   economy: [trade, commerce, agriculture, production, merchant, market]
+events:
+  - canonical: Fourth Crusade
+    aliases: ["Fourth Crusade", "1204 conquest", "\u7b2c\u56db\u6b21\u5341\u5b57\u519b\u4e1c\u5f81", "1204\u5e74\u9677\u843d"]
+  - canonical: Battle of Manzikert
+    aliases: ["Battle of Manzikert", "Manzikert", "\u66fc\u9f50\u523b\u5c14\u7279\u6218\u5f79"]
+polities:
+  - canonical: Byzantine Empire
+    aliases: ["Byzantine Empire", "Eastern Roman Empire", "\u62dc\u5360\u5ead\u5e1d\u56fd", "\u4e1c\u7f57\u9a6c\u5e1d\u56fd"]
+dynasties:
+  - canonical: Komnenian dynasty
+    aliases: ["Komnenian", "Komnenos", "\u79d1\u59c6\u5b81\u738b\u671d", "\u79d1\u59c6\u5b81\u5bb6\u65cf"]
+offices:
+  - canonical: emperor
+    aliases: ["emperor", "basileus", "\u7687\u5e1d", "\u5df4\u897f\u7406\u65af"]
+institutions:
+  - canonical: theme system
+    aliases: ["theme system", "themes", "\u519b\u533a\u5236", "\u519b\u533a"]
+military_groups:
+  - canonical: Varangian Guard
+    aliases: ["Varangian Guard", "Varangians", "\u74e6\u5170\u5409\u536b\u961f", "\u74e6\u5170\u5409\u4eba"]
+religious_groups:
+  - canonical: Orthodox Church
+    aliases: ["Orthodox Church", "Orthodox", "\u4e1c\u6b63\u6559\u4f1a", "\u4e1c\u6b63\u6559"]
+works:
+  - canonical: Alexiad
+    aliases: ["Alexiad", "The Alexiad", "\u963f\u83b1\u514b\u4fee\u65af\u4f20"]

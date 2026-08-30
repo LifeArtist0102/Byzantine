@@ -10,7 +10,9 @@ import typer
 from byzantine.ingestion.pipeline import load_book_config
 from byzantine.retrieval.search import render_evidence, search_local_index
 
-app = typer.Typer(add_completion=False, help="Retrieve cited evidence from the Byzantine Qdrant index.")
+app = typer.Typer(
+    add_completion=False, help="Retrieve cited evidence from the Byzantine Qdrant index."
+)
 
 
 @app.command()
@@ -44,7 +46,9 @@ def run(
         date_start=date_start,
         date_end=date_end,
     )
-    typer.echo(json.dumps(result, ensure_ascii=False, indent=2) if json_output else render_evidence(result))
+    typer.echo(
+        json.dumps(result, ensure_ascii=False, indent=2) if json_output else render_evidence(result)
+    )
 
 
 if __name__ == "__main__":

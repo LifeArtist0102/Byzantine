@@ -20,6 +20,12 @@ YEAR = re.compile(r"(?<!\d)(?:c\.\s*)?(\d{3,4})(?!\d)")
 PROPER_NAME = re.compile(r"\b(?:[A-Z][a-z]+|[IVX]+)(?:\s+(?:[A-Z][a-z]+|[IVX]+)){1,3}\b")
 
 
+def _records(seed: dict[str, Any], category: str) -> list[dict[str, Any]]:
+    return [
+        item for item in seed.get(category, []) if isinstance(item, dict) and item.get("canonical")
+    ]
+
+
 def load_seed(path: Path) -> dict[str, Any]:
     with path.open("r", encoding="utf-8") as handle:
         return yaml.safe_load(handle) or {}
@@ -29,7 +35,9 @@ def _alias_matches(text: str, records: Iterable[dict[str, Any]]) -> list[str]:
     matches: list[str] = []
     for record in records:
         aliases = record.get("aliases", [])
-        if any(re.search(rf"(?<!\w){re.escape(alias)}(?!\w)", text, re.IGNORECASE) for alias in aliases):
+        if any(
+            re.search(rf"(?<!\w){re.escape(alias)}(?!\w)", text, re.IGNORECASE) for alias in aliases
+        ):
             matches.append(str(record["canonical"]))
     return sorted(set(matches))
 
@@ -52,7 +60,10 @@ def extract_date_range(
     for match in YEAR_RANGE.finditer(text):
         start = int(match.group(1))
         end = _resolve_short_year(start, match.group(2))
-        if historical_year_min <= start <= historical_year_max and historical_year_min <= end <= historical_year_max:
+        if (
+            historical_year_min <= start <= historical_year_max
+            and historical_year_min <= end <= historical_year_max
+        ):
             values.extend((start, end))
             evidence.append(match.group(0))
     for match in YEAR.finditer(text):
@@ -68,12 +79,17 @@ def extract_topics(text: str, topics: dict[str, list[str]]) -> list[str]:
     detected = [
         topic
         for topic, keywords in topics.items()
-        if any(re.search(rf"(?<!\w){re.escape(keyword.casefold())}(?!\w)", lowered) for keyword in keywords)
+        if any(
+            re.search(rf"(?<!\w){re.escape(keyword.casefold())}(?!\w)", lowered)
+            for keyword in keywords
+        )
     ]
     return sorted(detected)
 
 
-def extract_person_candidates(text: str, known_people: list[str], known_places: list[str]) -> list[str]:
+def extract_person_candidates(
+    text: str, known_people: list[str], known_places: list[str]
+) -> list[str]:
     known = {value.casefold() for value in [*known_people, *known_places]}
     candidates = {
         match.group(0)
@@ -83,6 +99,63 @@ def extract_person_candidates(text: str, known_people: list[str], known_places: 
     return sorted(candidates)[:20]
 
 
+def extract_candidates(
+    text: str,
+    seed: dict[str, Any],
+    *,
+    people: list[str] | None = None,
+    places: list[str] | None = None,
+) -> dict[str, list[str]]:
+    """Candidate metadata is useful for recall, never a hard historical fact."""
+    result: dict[str, list[str]] = {}
+    for category in (
+        "events",
+        "polities",
+        "dynasties",
+        "offices",
+        "institutions",
+        "military_groups",
+        "religious_groups",
+        "works",
+    ):
+        matches = _alias_matches(text, _records(seed, category))
+        if matches:
+            result[category] = matches
+    aliases = []
+    resolved = {"people": people or [], "places": places or [], **result}
+    for category in ("people", "places", *result):
+        for record in _records(seed, category):
+            if record.get("canonical") in resolved.get(category, []):
+                aliases.extend(str(item) for item in record.get("aliases", []))
+    result["aliases"] = sorted(set(aliases))
+    return result
+
+
+def build_retrieval_text(
+    original_text: str,
+    *,
+    bibliographic: dict[str, Any],
+    section_path: list[str],
+    trusted: dict[str, Any],
+    candidates: dict[str, Any],
+    llm: dict[str, Any] | None = None,
+) -> str:
+    """Build a search-only representation; citation code never reads this field."""
+    fields = [
+        str(bibliographic.get("title") or ""),
+        str(bibliographic.get("author") or ""),
+        " > ".join(section_path),
+        " ".join(str(value) for value in trusted.get("people", []) + trusted.get("places", [])),
+        " ".join(
+            str(value) for value in candidates.get("events", []) + candidates.get("aliases", [])
+        ),
+        " ".join(str(value) for value in trusted.get("themes", [])),
+        str((llm or {}).get("contextual_prefix") or ""),
+        original_text,
+    ]
+    return "\n".join(value for value in fields if value.strip())
+
+
 def enrich_chunk(
     chunk: dict[str, Any],
     seed: dict[str, Any],
@@ -90,7 +163,7 @@ def enrich_chunk(
     historical_year_min: int = 200,
     historical_year_max: int = 1500,
 ) -> dict[str, Any]:
-    text = str(chunk["text"])
+    text = str(chunk.get("original_text", chunk["text"]))
     people = _alias_matches(text, seed.get("people", []))
     places = _alias_matches(text, seed.get("places", []))
     date_start, date_end, date_evidence = extract_date_range(
@@ -98,18 +171,38 @@ def enrich_chunk(
         historical_year_min=historical_year_min,
         historical_year_max=historical_year_max,
     )
+    trusted = {
+        "people": people,
+        "places": places,
+        "date_start": date_start,
+        "date_end": date_end,
+        "date_evidence": date_evidence,
+        "themes": extract_topics(text, seed.get("topics", {})),
+        "section_path": list(chunk.get("section_path", [])),
+    }
+    candidates = {
+        **extract_candidates(text, seed, people=people, places=places),
+        "person_candidates": extract_person_candidates(text, people, places),
+        "date_ranges": [[date_start, date_end]] if date_start is not None else [],
+    }
+    metadata = {
+        "trusted": trusted,
+        "candidate": candidates,
+        "llm_inference": dict(chunk.get("llm_inference", {})),
+        # Legacy aliases preserve existing filters and user data.
+        "people": people,
+        "places": places,
+        "date_start": date_start,
+        "date_end": date_end,
+        "date_evidence": date_evidence,
+        "topics": trusted["themes"],
+        "metadata_provenance": "trusted_local_and_candidate_local_v2",
+    }
     return {
         **chunk,
-        "metadata": {
-            "people": people,
-            "person_candidates": extract_person_candidates(text, people, places),
-            "places": places,
-            "date_start": date_start,
-            "date_end": date_end,
-            "date_evidence": date_evidence,
-            "topics": extract_topics(text, seed.get("topics", {})),
-            "metadata_provenance": "local_seed_and_regex_v1",
-        },
+        "original_text": text,
+        "text": text,
+        "metadata": metadata,
     }
 
 
