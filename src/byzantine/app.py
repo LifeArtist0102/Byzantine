@@ -28,7 +28,6 @@ from byzantine.workflows.import_jobs import (
     add_draft_item,
     create_job_from_draft,
     draft_items,
-    job_is_running,
     jobs,
     pause_job,
     remove_draft_item,
@@ -1068,7 +1067,6 @@ def _render_import_progress(st: Any, root: Path) -> None:
         current_fraction = float(processing.get("progress", 0.0)) if processing else 0.0
         overall = min(1.0, (completed + current_fraction) / total)
         status = job.get("status", "queued")
-        worker_active = job_is_running(str(job["job_id"]))
         label = {
             "queued": "等待开始",
             "running": "处理中",
@@ -1076,29 +1074,29 @@ def _render_import_progress(st: Any, root: Path) -> None:
             "paused": "已暂停",
             "completed": "已完成",
         }.get(status, status)
-        if status in {"running", "pausing"} and not worker_active:
-            label = "已中断，可继续"
         with st.container(border=True):
             head, controls = st.columns([3, 2])
             with head:
                 st.markdown(f"**{label}** · {completed}/{len(items)} 份已完成")
                 st.caption(job.get("current_stage", "等待开始"))
             with controls:
-                can_resume = status in {"queued", "paused"} or (
-                    status in {"running", "pausing"} and not worker_active
-                )
-                if can_resume and st.button(
+                if status in {"queued", "paused"} and st.button(
                     "开始" if status == "queued" else "继续处理",
                     key=f"resume-import-{job['job_id']}",
                     width="stretch",
                 ):
                     start_or_resume_job(root, job["job_id"])
                     st.rerun()
-                elif status in {"running", "pausing"} and st.button(
-                    "暂停", key=f"pause-import-{job['job_id']}", width="stretch"
-                ):
-                    pause_job(root, job["job_id"])
-                    st.rerun()
+                elif status in {"running", "pausing"}:
+                    pause_col, resume_col = st.columns(2)
+                    if pause_col.button("暂停", key=f"pause-import-{job['job_id']}"):
+                        pause_job(root, job["job_id"])
+                        st.rerun()
+                    if resume_col.button("恢复", key=f"recover-import-{job['job_id']}"):
+                        # Active workers ignore this safely. After a full app
+                        # restart, it requeues only the interrupted document.
+                        start_or_resume_job(root, job["job_id"])
+                        st.rerun()
                 elif failed and st.button(
                     f"重试失败项 ({failed})", key=f"retry-import-{job['job_id']}", width="stretch"
                 ):
@@ -1227,9 +1225,8 @@ def _batch_import(st: Any, _database: LibraryDatabase) -> None:
         st.rerun()
 
     if import_jobs:
-        refresh_interval = (
-            2 if any(job_is_running(str(job["job_id"])) for job in import_jobs) else None
-        )
+        active_statuses = {"queued", "running", "pausing"}
+        refresh_interval = 2 if any(job.get("status") in active_statuses for job in import_jobs) else None
 
         @st.fragment(run_every=refresh_interval)
         def live_import_progress() -> None:
