@@ -97,6 +97,13 @@ def jobs(root: Path) -> list[dict[str, Any]]:
     return _mutate(root, lambda state: list(state["jobs"]))
 
 
+def job_is_running(job_id: str) -> bool:
+    """Return whether this app process still owns a live worker for the job."""
+    with _LOCK:
+        worker = _WORKERS.get(job_id)
+        return bool(worker and worker.is_alive())
+
+
 def create_job_from_draft(root: Path) -> dict[str, Any]:
     def create(state: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
         if not state["draft"]:

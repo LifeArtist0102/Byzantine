@@ -111,3 +111,4 @@ def test_worker_persists_progress_and_completed_document(tmp_path: Path, monkeyp
     assert item["status"] == "completed"
     assert item["document_id"] == "doc_saved"
     assert not Path(item["staged_path"]).exists()
+    assert not import_jobs.job_is_running(job["job_id"])
