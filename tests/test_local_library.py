@@ -354,3 +354,20 @@ def test_topic_chat_summary_preserves_conversation_and_evidence(tmp_path):
     assert saved[0]["evidence_snapshot"][0]["document_id"] == document.document_id
     assert database.get_conversation(conversation)["topic_id"] == topic
     assert len(database.conversation_messages(conversation)) == 2
+
+
+def test_chat_evidence_snapshots_use_the_canonical_chunk_id(tmp_path):
+    from byzantine.app import _evidence_from_snapshot
+
+    database = LibraryDatabase(tmp_path / "library.db")
+    database.initialize()
+    document = _document(database)
+    database.save_chunks(document.document_id, [_chunk(document.document_id)])
+    evidence = database.document_evidence(document.document_id)[0]
+
+    parsed = _evidence_from_snapshot([evidence.model_dump(mode="json")])
+
+    assert parsed[0].chunk_id == evidence.chunk_id
+    assert {(item.document_id, item.chunk_id) for item in parsed} == {
+        (document.document_id, evidence.chunk_id)
+    }

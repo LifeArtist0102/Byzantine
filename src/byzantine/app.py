@@ -525,7 +525,7 @@ def _agent_page(st: Any, database: LibraryDatabase) -> None:
         evidence_by_key: dict[tuple[str, str], Evidence] = {}
         for message in messages:
             for item in _evidence_from_snapshot(message["evidence_snapshot"]):
-                evidence_by_key[(item.document_id, item.node_id)] = item
+                evidence_by_key[(item.document_id, item.chunk_id)] = item
         evidence = list(evidence_by_key.values())[:10]
         if not evidence:
             st.warning("当前对话还没有可归档的文献证据。")
