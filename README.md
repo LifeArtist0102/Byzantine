@@ -27,6 +27,21 @@ Historia 面向长篇历史与学术文献构建：检索不是单纯“找相�
 
 ## 从 GitHub 克隆后运行（Windows / PyCharm）
 
+### 给 Codex 的一句话（推荐）
+
+把下面整句话连同仓库链接发给 Codex，即可让它克隆项目、安装依赖、下载缺失的本地模型并打开 Historia；首次下载 BGE-M3 会占用较多网络和磁盘空间。
+
+```text
+请从 https://github.com/LifeArtist0102/Byzantine 克隆 Historia，按仓库 AGENTS.md 完成本地安装：创建虚拟环境、安装依赖和缺失的 BGE-M3，启动应用并在浏览器打开 Historia。不要导入或提交任何资料，也不要要求我手动执行命令。
+```
+
+仓库中的 [`AGENTS.md`](AGENTS.md) 是 Codex 的项目级操作约定；[`scripts/bootstrap_historia.ps1`](scripts/bootstrap_historia.ps1) 是它会执行的 Windows 一键脚本。若 BGE-M3 已下载在其他位置，可传入 `-ModelDir` 复用，避免重复下载：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\bootstrap_historia.ps1 `
+  -DataDir "D:\HistoriaData" -ModelDir "D:\models\bge-m3"
+```
+
 推荐 Python 3.11–3.13。在 PowerShell 中执行：
 
 ```powershell
