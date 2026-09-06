@@ -102,6 +102,7 @@ def build_hierarchical_chunks(
     child_max_tokens: int = 800,
     overlap_tokens: int = 0,
     semantic_embedder: Callable[[list[str]], list[list[float]]] | None = None,
+    progress: Callable[[str, float], None] | None = None,
 ) -> list[dict[str, Any]]:
     """Build Section -> Parent -> Child records without losing source regions.
 
@@ -123,12 +124,29 @@ def build_hierarchical_chunks(
     result: list[dict[str, Any]] = []
     global_index = 0
     effective_child_target = min(child_target_tokens, child_max_tokens)
+    semantic_total = sum(len(items) for items in grouped.values() if len(items) > 2)
+    semantic_completed = 0
+    total_sections = max(len(grouped), 1)
     for section_number, (path, section_units) in enumerate(grouped.items()):
         section_id = f"{document_id}_section_{section_number:04d}"
         semantic_breaks: set[int] = set()
         if semantic_embedder and len(section_units) > 2:
             try:
-                vectors = semantic_embedder([item["original_text"] for item in section_units])
+                # Boundary detection needs a representative local passage, not
+                # every token in a long paragraph.  Batching keeps large books
+                # responsive on CPU while still using local BGE-M3 semantics.
+                vectors: list[list[float]] = []
+                for start in range(0, len(section_units), 32):
+                    batch = section_units[start : start + 32]
+                    vectors.extend(
+                        semantic_embedder([item["original_text"][:1200] for item in batch])
+                    )
+                    semantic_completed += len(batch)
+                    if progress and semantic_total:
+                        progress(
+                            "正在分析段落语义边界",
+                            0.05 + 0.55 * semantic_completed / semantic_total,
+                        )
                 for index in range(1, len(vectors)):
                     left, right = vectors[index - 1], vectors[index]
                     similarity = sum(a * b for a, b in zip(left, right, strict=False))
@@ -239,6 +257,11 @@ def build_hierarchical_chunks(
                     }
                 )
                 global_index += 1
+        if progress:
+            progress(
+                "正在构建章节、上下文与检索片段",
+                0.60 + 0.40 * (section_number + 1) / total_sections,
+            )
     for index, chunk in enumerate(result):
         chunk["prev_chunk_id"] = result[index - 1]["chunk_id"] if index else None
         chunk["next_chunk_id"] = result[index + 1]["chunk_id"] if index + 1 < len(result) else None

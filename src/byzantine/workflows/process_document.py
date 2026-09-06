@@ -100,13 +100,13 @@ def _text_chunks(
 
 def _extract_pdf(path: Path, document_id: str) -> tuple[list[dict[str, Any]], int]:
     try:
-        import fitz
+        import pymupdf
     except ImportError as exc:  # pragma: no cover
         raise RuntimeError('请安装 PyMuPDF：pip install -e ".[app]"') from exc
     chunks: list[dict[str, Any]] = []
     section_path = ["PDF document"]
     numbered_heading = re.compile(r"^(?:\d+(?:\.\d+)*|[IVXLC]+)\.?\s+", re.IGNORECASE)
-    with fitz.open(path) as pdf:
+    with pymupdf.open(path) as pdf:
         for page_number, page in enumerate(pdf, start=1):
             page_dict = page.get_text("dict")
             text_blocks = sorted(
@@ -333,10 +333,23 @@ def _run_pipeline(
         chunks,
         document_id=document.document_id,
         semantic_embedder=_local_semantic_embedder(),
+        progress=(
+            lambda stage, fraction: progress(stage, 0.30 + 0.10 * max(0.0, min(fraction, 1.0)))
+            if progress
+            else None
+        ),
     )
     # Deterministic enrichment always happens first.  Optional LLM metadata
     # only augments the difficult children selected by its gate below.
-    enriched = [enrich_chunk(chunk, seed) for chunk in chunks]
+    enriched: list[dict[str, Any]] = []
+    total_chunks = max(len(chunks), 1)
+    for index, chunk in enumerate(chunks, start=1):
+        enriched.append(enrich_chunk(chunk, seed))
+        if progress and (index == total_chunks or index % 25 == 0):
+            progress(
+                f"正在整理人物、地点、年代与主题 {index}/{total_chunks}",
+                0.40 + 0.015 * index / total_chunks,
+            )
     bibliographic = document.model_dump(mode="json")
     trusted_bibliographic = {
         key: bibliographic.get(key)
@@ -395,6 +408,8 @@ def _run_pipeline(
     except RuntimeError:
         pass
     database.save_chunks(document.document_id, chunks)
+    if progress:
+        progress(f"已保存 {len(chunks)} 条可检索证据，准备向量化", 0.42)
     try:
         from byzantine.indexing.library_index import upsert_evidence
 

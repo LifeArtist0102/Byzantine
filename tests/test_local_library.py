@@ -148,14 +148,14 @@ def test_txt_import_preserves_document_scope_and_text_regions(tmp_path, monkeypa
 
 
 def test_pdf_import_persists_page_and_bbox(tmp_path, monkeypatch):
-    import fitz
+    import pymupdf
 
     from byzantine.indexing import library_index
 
     monkeypatch.setenv("BYZANTINE_DATA_DIR", str(tmp_path / "app-data"))
     monkeypatch.setattr(library_index, "upsert_evidence", lambda *args, **kwargs: None)
     source = tmp_path / "source.pdf"
-    pdf = fitz.open()
+    pdf = pymupdf.open()
     page = pdf.new_page()
     page.insert_text((72, 72), "Alexios governed Constantinople.")
     pdf.save(source)
@@ -174,10 +174,10 @@ def test_pdf_import_persists_page_and_bbox(tmp_path, monkeypatch):
 
 
 def test_pdf_layout_blocks_are_aggregated_into_one_evidence_chunk(tmp_path):
-    import fitz
+    import pymupdf
 
     source = tmp_path / "blocks.pdf"
-    pdf = fitz.open()
+    pdf = pymupdf.open()
     page = pdf.new_page()
     for y, text in (
         (72, "First paragraph."),
@@ -194,10 +194,10 @@ def test_pdf_layout_blocks_are_aggregated_into_one_evidence_chunk(tmp_path):
 
 
 def test_pdf_layout_heading_builds_a_section_path_and_keeps_body_bbox(tmp_path):
-    import fitz
+    import pymupdf
 
     source = tmp_path / "headed.pdf"
-    pdf = fitz.open()
+    pdf = pymupdf.open()
     page = pdf.new_page()
     page.insert_text((72, 72), "1. The Komnenian restoration", fontsize=18, fontname="hebo")
     page.insert_text((72, 120), "Alexios governed Constantinople.", fontsize=11)

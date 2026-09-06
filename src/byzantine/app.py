@@ -1052,6 +1052,66 @@ def _system_settings(st: Any, database: LibraryDatabase) -> None:
     )
 
 
+def _render_import_progress(st: Any, root: Path) -> None:
+    import_jobs = jobs(root)
+    if not import_jobs:
+        return
+    st.markdown("#### 导入进度")
+    st.caption("进度会自动刷新。暂停会在当前文献完成后生效；已完成的文献不会重复处理。")
+    for job in import_jobs[:5]:
+        items = job.get("items", [])
+        total = max(len(items), 1)
+        completed = sum(item.get("status") == "completed" for item in items)
+        failed = sum(item.get("status") == "failed" for item in items)
+        processing = next((item for item in items if item.get("status") == "processing"), None)
+        current_fraction = float(processing.get("progress", 0.0)) if processing else 0.0
+        overall = min(1.0, (completed + current_fraction) / total)
+        status = job.get("status", "queued")
+        label = {
+            "queued": "等待开始",
+            "running": "处理中",
+            "pausing": "正在暂停",
+            "paused": "已暂停",
+            "completed": "已完成",
+        }.get(status, status)
+        with st.container(border=True):
+            head, controls = st.columns([3, 2])
+            with head:
+                st.markdown(f"**{label}** · {completed}/{len(items)} 份已完成")
+                st.caption(job.get("current_stage", "等待开始"))
+            with controls:
+                if status in {"queued", "paused"} and st.button(
+                    "开始" if status == "queued" else "继续处理",
+                    key=f"resume-import-{job['job_id']}",
+                    width="stretch",
+                ):
+                    start_or_resume_job(root, job["job_id"])
+                    st.rerun()
+                elif status in {"running", "pausing"} and st.button(
+                    "暂停", key=f"pause-import-{job['job_id']}", width="stretch"
+                ):
+                    pause_job(root, job["job_id"])
+                    st.rerun()
+                elif failed and st.button(
+                    f"重试失败项 ({failed})", key=f"retry-import-{job['job_id']}", width="stretch"
+                ):
+                    retry_failed_items(root, job["job_id"])
+                    start_or_resume_job(root, job["job_id"])
+                    st.rerun()
+                else:
+                    st.button("已保存", key=f"saved-import-{job['job_id']}", disabled=True, width="stretch")
+            st.progress(overall, text=f"{completed} 已完成 · {failed} 失败 · 共 {len(items)} 份")
+            if failed:
+                for item in items:
+                    if item.get("status") == "failed":
+                        st.caption(
+                            f"《{item.get('title', '未命名文献')}》失败："
+                            f"{item.get('error', '未知错误')}"
+                        )
+    if st.button("刷新导入进度", key="refresh-import-progress", width="stretch"):
+        st.rerun()
+
+
 def _batch_import(st: Any, _database: LibraryDatabase) -> None:
     """Render the durable import queue; processing itself runs outside Streamlit reruns."""
     root = ensure_app_data_dir()
@@ -1160,57 +1220,14 @@ def _batch_import(st: Any, _database: LibraryDatabase) -> None:
         st.rerun()
 
     if import_jobs:
-        st.markdown("#### 导入进度")
-        st.caption("处理进度保存在本机。暂停会在当前文献完成后生效；已完成的文献不会重复处理。")
-        for job in import_jobs[:5]:
-            items = job.get("items", [])
-            total = max(len(items), 1)
-            completed = sum(item.get("status") == "completed" for item in items)
-            failed = sum(item.get("status") == "failed" for item in items)
-            processing = next((item for item in items if item.get("status") == "processing"), None)
-            current_fraction = float(processing.get("progress", 0.0)) if processing else 0.0
-            overall = min(1.0, (completed + current_fraction) / total)
-            status = job.get("status", "queued")
-            label = {
-                "queued": "等待开始",
-                "running": "处理中",
-                "pausing": "正在暂停",
-                "paused": "已暂停",
-                "completed": "已完成",
-            }.get(status, status)
-            with st.container(border=True):
-                head, controls = st.columns([3, 2])
-                with head:
-                    st.markdown(f"**{label}** · {completed}/{len(items)} 份已完成")
-                    st.caption(job.get("current_stage", "等待开始"))
-                with controls:
-                    if status in {"queued", "paused"} and st.button(
-                        "开始" if status == "queued" else "继续处理",
-                        key=f"resume-import-{job['job_id']}",
-                        width="stretch",
-                    ):
-                        start_or_resume_job(root, job["job_id"])
-                        st.rerun()
-                    elif status in {"running", "pausing"} and st.button(
-                        "暂停", key=f"pause-import-{job['job_id']}", width="stretch"
-                    ):
-                        pause_job(root, job["job_id"])
-                        st.rerun()
-                    elif failed and st.button(
-                        f"重试失败项 ({failed})", key=f"retry-import-{job['job_id']}", width="stretch"
-                    ):
-                        retry_failed_items(root, job["job_id"])
-                        start_or_resume_job(root, job["job_id"])
-                        st.rerun()
-                    else:
-                        st.button("已保存", key=f"saved-import-{job['job_id']}", disabled=True, width="stretch")
-                st.progress(overall, text=f"{completed} 已完成 · {failed} 失败 · 共 {len(items)} 份")
-                if failed:
-                    for item in items:
-                        if item.get("status") == "failed":
-                            st.caption(f"《{item.get('title', '未命名文献')}》失败：{item.get('error', '未知错误')}")
-        if st.button("刷新导入进度", key="refresh-import-progress", width="stretch"):
-            st.rerun()
+        active_statuses = {"queued", "running", "pausing"}
+        refresh_interval = 2 if any(job.get("status") in active_statuses for job in import_jobs) else None
+
+        @st.fragment(run_every=refresh_interval)
+        def live_import_progress() -> None:
+            _render_import_progress(st, root)
+
+        live_import_progress()
 
 
 def _library_management(st: Any, database: LibraryDatabase) -> None:

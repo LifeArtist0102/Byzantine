@@ -99,6 +99,29 @@ def test_token_limits_hold_for_an_unspaced_cjk_paragraph():
     assert all(item["parent"]["token_count"] <= 100 for item in chunks)
 
 
+def test_semantic_chunking_reports_batched_progress_for_large_sections():
+    unit = _units()[0]
+    units = [{**unit, "text": f"{unit['text']} Passage {index}."} for index in range(33)]
+    calls: list[int] = []
+    updates: list[tuple[str, float]] = []
+
+    def embed(texts: list[str]) -> list[list[float]]:
+        calls.append(len(texts))
+        assert all(len(text) <= 1200 for text in texts)
+        return [[1.0, 0.0] for _ in texts]
+
+    build_hierarchical_chunks(
+        units,
+        document_id="doc",
+        semantic_embedder=embed,
+        progress=lambda stage, fraction: updates.append((stage, fraction)),
+    )
+
+    assert calls == [32, 1]
+    assert any(stage == "正在分析段落语义边界" for stage, _ in updates)
+    assert updates[-1][0] == "正在构建章节、上下文与检索片段"
+
+
 def test_original_text_is_separate_from_retrieval_text_and_database_migrates(tmp_path):
     database, document_id = _database(tmp_path)
     chunk = enrich_chunk(
