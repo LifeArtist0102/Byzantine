@@ -7,8 +7,6 @@ import html
 import os
 import subprocess
 import sys
-import time
-import uuid
 from pathlib import Path
 from typing import Any
 
@@ -18,7 +16,7 @@ from byzantine.generation.deepseek import (
     load_deepseek_api_key,
     summarize_research_chat,
 )
-from byzantine.models.document import BibliographicMetadata, DocumentRecord
+from byzantine.models.document import DocumentRecord
 from byzantine.models.evidence import Evidence
 from byzantine.paths import ensure_app_data_dir
 from byzantine.research.services import classify_difference, parallel_reading
@@ -26,7 +24,17 @@ from byzantine.retrieval.hybrid import expand_context
 from byzantine.retrieval.pipeline import run_adaptive_retrieval
 from byzantine.storage.database import LibraryDatabase
 from byzantine.workflows.delete_document import delete_document_from_library
-from byzantine.workflows.process_document import process_document, reprocess_document
+from byzantine.workflows.import_jobs import (
+    add_draft_item,
+    create_job_from_draft,
+    draft_items,
+    jobs,
+    pause_job,
+    remove_draft_item,
+    retry_failed_items,
+    start_or_resume_job,
+)
+from byzantine.workflows.process_document import reprocess_document
 
 RESEARCH_PAGES = ["Agent 问答", "研究专题", "史料平行对读", "矛盾与反证"]
 COLLECTION_LABELS = {"starter": "公共资料库", "personal": "个人资料库"}
@@ -1044,15 +1052,11 @@ def _system_settings(st: Any, database: LibraryDatabase) -> None:
     )
 
 
-def _batch_import(st: Any, database: LibraryDatabase) -> None:
-    result = st.session_state.pop("import_result", None)
-    if result:
-        if result["completed"]:
-            st.success(f"成功处理 {len(result['completed'])} 份：{'、'.join(result['completed'])}")
-        if result["failures"]:
-            st.error("\n".join(result["failures"]))
-
-    queue: list[dict[str, Any]] = st.session_state.setdefault("import_queue", [])
+def _batch_import(st: Any, _database: LibraryDatabase) -> None:
+    """Render the durable import queue; processing itself runs outside Streamlit reruns."""
+    root = ensure_app_data_dir()
+    queue = draft_items(root)
+    import_jobs = jobs(root)
     nonce = int(st.session_state.setdefault("import_form_nonce", 0))
     intake_col, queue_col = st.columns([1.08, 0.92], gap="large")
     with intake_col, st.container(border=True):
@@ -1093,29 +1097,31 @@ def _batch_import(st: Any, database: LibraryDatabase) -> None:
                 digest = hashlib.sha256(content).hexdigest()
                 if not title.strip():
                     st.error("书名不能为空。")
-                elif any(item["file_hash"] == digest for item in queue):
-                    st.warning("这份文件已经在待处理队列中。")
                 else:
-                    queue.append(
-                        {
-                            "queue_id": f"queued_{uuid.uuid4().hex}",
-                            "name": safe_name,
-                            "content": content,
-                            "file_hash": digest,
-                            "size": len(content),
-                            "title": title.strip(),
-                            "author": author.strip() or None,
-                            "publisher": publisher.strip() or None,
-                            "edition": edition.strip() or None,
-                            "publication_year": int(year) or None,
-                            "collection_id": collection_id,
-                            "language": language,
-                            "source_type": source_type,
-                        }
-                    )
-                    st.session_state.import_form_nonce = nonce + 1
-                    st.session_state.import_queue_notice = f"《{title.strip()}》已加入队列。"
-                    st.rerun()
+                    try:
+                        add_draft_item(
+                            root,
+                            {
+                                "name": safe_name,
+                                "file_hash": digest,
+                                "size": len(content),
+                                "title": title.strip(),
+                                "author": author.strip() or None,
+                                "publisher": publisher.strip() or None,
+                                "edition": edition.strip() or None,
+                                "publication_year": int(year) or None,
+                                "collection_id": collection_id,
+                                "language": language,
+                                "source_type": source_type,
+                            },
+                            content,
+                        )
+                    except ValueError as exc:
+                        st.warning(str(exc))
+                    else:
+                        st.session_state.import_form_nonce = nonce + 1
+                        st.session_state.import_queue_notice = f"《{title.strip()}》已加入待处理队列。"
+                        st.rerun()
         else:
             st.info("先选择一份文献，随后填写该文献的作者、版本和出版信息。")
 
@@ -1143,69 +1149,68 @@ def _batch_import(st: Any, database: LibraryDatabase) -> None:
                     if action_col.button(
                         "移除", key=f"remove-queued-{item['queue_id']}", width="stretch"
                     ):
-                        st.session_state.import_queue = [
-                            queued for queued in queue if queued["queue_id"] != item["queue_id"]
-                        ]
+                        remove_draft_item(root, item["queue_id"])
                         st.session_state.import_queue_notice = f"《{item['title']}》已移出队列。"
                         st.rerun()
 
     if st.button("开始处理队列", type="primary", disabled=not queue, width="stretch"):
-        overall = st.progress(0, text="准备导入")
-        report = st.status("文献队列处理中", expanded=True)
-        started = time.monotonic()
-        pending = list(queue)
-        total = len(pending)
-        completed: list[str] = []
-        failures: list[str] = []
-        failed_items: list[dict[str, Any]] = []
-        staging = ensure_app_data_dir() / ".uploads"
-        staging.mkdir(exist_ok=True)
-        for index, item in enumerate(pending):
-            safe_name = item["name"]
-            local = staging / f"{uuid.uuid4().hex}_{safe_name}"
-            local.write_bytes(item["content"])
-            title = item["title"]
-
-            def update(
-                stage: str, fraction: float, *, index: int = index, title: str = title
-            ) -> None:
-                whole = (index + max(0.0, min(fraction, 1.0))) / total
-                elapsed = time.monotonic() - started
-                eta = elapsed / max(index + fraction, 0.1) * (total - index - fraction)
-                overall.progress(
-                    whole,
-                    text=f"{index + 1}/{total} · {title} · {stage} · 预计剩余 {max(0, int(eta))} 秒",
-                )
-
-            try:
-                report.write(f"正在处理：{safe_name}")
-                document = process_document(
-                    local,
-                    collection_id=item["collection_id"],
-                    metadata=BibliographicMetadata(
-                        title=title,
-                        author=item["author"],
-                        edition=item["edition"],
-                        publisher=item["publisher"],
-                        publication_year=item["publication_year"],
-                        language=item["language"],
-                        source_type=item["source_type"],
-                    ),
-                    database=database,
-                    seed_path=Path("config/entity_seed.yaml"),
-                    progress=update,
-                )
-                completed.append(document.title)
-            except Exception as exc:  # noqa: BLE001
-                failures.append(f"{safe_name}：{exc}")
-                failed_items.append(item)
-            finally:
-                local.unlink(missing_ok=True)
-            overall.progress((index + 1) / total, text=f"已完成 {index + 1}/{total} 份文献")
-        report.update(label="队列处理完成", state="complete", expanded=bool(failures))
-        st.session_state.import_queue = failed_items
-        st.session_state.import_result = {"completed": completed, "failures": failures}
+        job = create_job_from_draft(root)
+        start_or_resume_job(root, job["job_id"])
+        st.session_state.import_queue_notice = "处理任务已启动；切换页面或另开窗口后仍可从这里查看进度。"
         st.rerun()
+
+    if import_jobs:
+        st.markdown("#### 导入进度")
+        st.caption("处理进度保存在本机。暂停会在当前文献完成后生效；已完成的文献不会重复处理。")
+        for job in import_jobs[:5]:
+            items = job.get("items", [])
+            total = max(len(items), 1)
+            completed = sum(item.get("status") == "completed" for item in items)
+            failed = sum(item.get("status") == "failed" for item in items)
+            processing = next((item for item in items if item.get("status") == "processing"), None)
+            current_fraction = float(processing.get("progress", 0.0)) if processing else 0.0
+            overall = min(1.0, (completed + current_fraction) / total)
+            status = job.get("status", "queued")
+            label = {
+                "queued": "等待开始",
+                "running": "处理中",
+                "pausing": "正在暂停",
+                "paused": "已暂停",
+                "completed": "已完成",
+            }.get(status, status)
+            with st.container(border=True):
+                head, controls = st.columns([3, 2])
+                with head:
+                    st.markdown(f"**{label}** · {completed}/{len(items)} 份已完成")
+                    st.caption(job.get("current_stage", "等待开始"))
+                with controls:
+                    if status in {"queued", "paused"} and st.button(
+                        "开始" if status == "queued" else "继续处理",
+                        key=f"resume-import-{job['job_id']}",
+                        width="stretch",
+                    ):
+                        start_or_resume_job(root, job["job_id"])
+                        st.rerun()
+                    elif status in {"running", "pausing"} and st.button(
+                        "暂停", key=f"pause-import-{job['job_id']}", width="stretch"
+                    ):
+                        pause_job(root, job["job_id"])
+                        st.rerun()
+                    elif failed and st.button(
+                        f"重试失败项 ({failed})", key=f"retry-import-{job['job_id']}", width="stretch"
+                    ):
+                        retry_failed_items(root, job["job_id"])
+                        start_or_resume_job(root, job["job_id"])
+                        st.rerun()
+                    else:
+                        st.button("已保存", key=f"saved-import-{job['job_id']}", disabled=True, width="stretch")
+                st.progress(overall, text=f"{completed} 已完成 · {failed} 失败 · 共 {len(items)} 份")
+                if failed:
+                    for item in items:
+                        if item.get("status") == "failed":
+                            st.caption(f"《{item.get('title', '未命名文献')}》失败：{item.get('error', '未知错误')}")
+        if st.button("刷新导入进度", key="refresh-import-progress", width="stretch"):
+            st.rerun()
 
 
 def _library_management(st: Any, database: LibraryDatabase) -> None:
