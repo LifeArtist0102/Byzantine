@@ -1,5 +1,7 @@
 .idea/
 .venv/
+.agents/
+.claude/
 __pycache__/
 *.py[cod]
 .env
@@ -14,6 +16,8 @@ data/source/*
 data/processed/*
 !data/processed/.gitkeep
 data/qdrant/
+data/import_jobs.json
+data/streamlit.pid
 .streamlit/
 *.sqlite
 *.sqlite3

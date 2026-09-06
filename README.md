@@ -14,17 +14,37 @@ Historia 是一个本地运行的拜占庭史研究 Agent。项目目录、Pytho
 
 证据阅读器、主张—证据账本、论文证据审计和史料批判卡已从界面移除，避免把 MVP 做成难以使用的功能堆叠。
 
-## 安装与启动（Windows / PyCharm）
+## 从 GitHub 克隆后运行（Windows / PyCharm）
 
-在 PyCharm 打开 `D:\下载软件\Byzantine`，选择项目的 `.venv` 解释器，然后在终端运行：
+推荐 Python 3.11–3.13。在 PowerShell 中执行：
 
 ```powershell
+git clone https://github.com/LifeArtist0102/Byzantine.git
+cd Byzantine
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 pip install -e ".[local,dev]"
+```
+
+首次需要下载 BGE-M3 向量模型。模型权重不会被提交到 GitHub；下载后保留在本机即可：
+
+```powershell
+pip install modelscope
+byzantine-download-model --output-dir models/bge-m3
+```
+
+建议把文献、SQLite 和 Qdrant 数据放在 D 盘，而不是项目目录或 C 盘。以下环境变量只对当前 PowerShell 窗口有效：
+
+```powershell
+$env:BYZANTINE_DATA_DIR = "D:\ByzantineData"
+$env:BYZANTINE_EMBEDDING_MODEL = "$PWD\models\bge-m3"
 byzantine-app
 ```
 
-浏览器打开页面后：先进入“设置 → 批量导入”，批量导入 PDF、DOCX、TXT 或 Markdown 文献；再回到“Agent 问答”，先选资料库类型，再选具体书名或全部文献，最后开始新聊天。
+在 PyCharm 中打开克隆后的 `Byzantine` 文件夹，并把解释器设为 `.venv\Scripts\python.exe` 即可。浏览器打开页面后：先进入“设置 → 批量导入”，每次加入一份带独立书目信息的文献，可连续组成处理队列；再回到“Agent 问答”，先选资料库类型，再选具体书名或全部文献，最后开始新聊天。
+
+如果只想启动界面而暂不进行向量化，可以跳过模型下载；上传后的向量索引会提示模型未准备好。DeepSeek 不是启动界面的必需条件。
 
 ## DeepSeek 配置
 
@@ -45,7 +65,7 @@ DEEPSEEK_API_KEY=你的密钥
 
 ```powershell
 $env:BYZANTINE_DATA_DIR = "D:\ByzantineData"
-$env:BYZANTINE_EMBEDDING_MODEL = "D:\下载软件\Byzantine\models\bge-m3"
+$env:BYZANTINE_EMBEDDING_MODEL = "D:\你的项目路径\Byzantine\models\bge-m3"
 byzantine-app
 ```
 
@@ -59,3 +79,10 @@ ruff check src tests
 ```
 
 旧的单书 CLI 原型仍可供调试：`byzantine-ingest`、`byzantine-chunk`、`byzantine-enrich`、`byzantine-index`、`byzantine-search` 和 `byzantine-ask`。
+
+## 常见问题
+
+- **首次导入大型 PDF 看似停在 30% 左右**：此时程序正在本地用 BGE-M3 分析段落语义并构建 Section—Parent—Child 结构，CPU 会持续工作。资料库的“导入进度”会自动刷新阶段和完成量；请勿重复上传同一文件。
+- **关闭页面或重启应用**：待处理文件、处理阶段和已完成文献都保存在 `BYZANTINE_DATA_DIR`。重新打开“设置 → 批量导入”，点击“恢复”或“继续处理”即可；正在处理但尚未落库的那一份会重新处理，已完成部分不会重复导入。
+- **`pymupdf` / BGE-M3 / Qdrant 报错**：先确认已执行 `pip install -e ".[local,dev]"`，BGE-M3 目录存在，并且 `BYZANTINE_EMBEDDING_MODEL` 指向该目录。
+- **不要提交本地资料**：原始 PDF、数据库、Qdrant 向量、下载的模型以及 `.env` 都被 `.gitignore` 排除；它们可能包含版权内容或密钥。
